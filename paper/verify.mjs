@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util"
 import { verifyComponents } from "./components.mjs"
+import { verifyPages } from "./pages.mjs"
 import { connectPaper } from "./paper-client.mjs"
 import {
   describeToken,
@@ -8,7 +9,7 @@ import {
   readPaperTokens,
 } from "./tokens.mjs"
 
-const usage = `Usage: node paper/verify.mjs tokens --file <id>
+const usage = `Usage: node paper/verify.mjs <tokens|pages> --file <id>
        node paper/verify.mjs components <component/example>... --file <id>`
 
 const verifyTokens = async (paper, fileId) => {
@@ -36,19 +37,22 @@ const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: { file: { type: "string" } },
 })
-const [command, ...names] = positionals
-const isComponents = command === "components" && names.length > 0
-if ((command !== "tokens" && !isComponents) || !values.file) {
+const commands = new Map([
+  ["tokens", verifyTokens],
+  ["pages", verifyPages],
+  ["components", verifyComponents],
+])
+const [commandName, ...names] = positionals
+const command = commands.get(commandName)
+const lacksNames = commandName === "components" && names.length === 0
+if (!command || lacksNames || !values.file) {
   console.error(usage)
   process.exit(2)
 }
 
 const paper = await connectPaper()
 try {
-  const matches = isComponents
-    ? await verifyComponents(paper, values.file, names)
-    : await verifyTokens(paper, values.file)
-  process.exitCode = matches ? 0 : 1
+  process.exitCode = (await command(paper, values.file, names)) ? 0 : 1
 } finally {
   await paper.close()
 }

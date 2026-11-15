@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util"
 import { syncComponents } from "./components.mjs"
+import { syncPages } from "./pages.mjs"
 import { connectPaper } from "./paper-client.mjs"
 import {
   describeToken,
@@ -8,7 +9,7 @@ import {
   readPaperTokens,
 } from "./tokens.mjs"
 
-const usage = `Usage: node paper/sync.mjs tokens --file <id>
+const usage = `Usage: node paper/sync.mjs <tokens|pages> --file <id>
        node paper/sync.mjs components <component/example>... --file <id>`
 
 const assertApplied = (tool, { tokens }) => {
@@ -67,20 +68,22 @@ const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: { file: { type: "string" } },
 })
-const [command, ...names] = positionals
-const isComponents = command === "components" && names.length > 0
-if ((command !== "tokens" && !isComponents) || !values.file) {
+const commands = new Map([
+  ["tokens", syncTokens],
+  ["pages", syncPages],
+  ["components", syncComponents],
+])
+const [commandName, ...names] = positionals
+const command = commands.get(commandName)
+const lacksNames = commandName === "components" && names.length === 0
+if (!command || lacksNames || !values.file) {
   console.error(usage)
   process.exit(2)
 }
 
 const paper = await connectPaper()
 try {
-  if (isComponents) {
-    await syncComponents(paper, values.file, names)
-  } else {
-    await syncTokens(paper, values.file)
-  }
+  await command(paper, values.file, names)
 } finally {
   await paper.close()
 }
