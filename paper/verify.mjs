@@ -10,7 +10,9 @@ import {
 } from "./tokens.mjs"
 
 const usage = `Usage: node paper/verify.mjs <tokens|pages> --file <id>
-       node paper/verify.mjs components <component/example>... --file <id>`
+       scripts/test-slot.sh node paper/verify.mjs components <component/example>... --file <id>
+
+components renders each frame's export from Paper in Chromium.`
 
 const verifyTokens = async (paper, fileId) => {
   const { tokens: expected } = await readCodeTokens()

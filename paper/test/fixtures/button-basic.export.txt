@@ -1,0 +1,14 @@
+(
+    <div style={{ backgroundColor: 'var(--paper)', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', fontSynthesis: 'none', gap: 'var(--space-3)', MozOsxFontSmoothing: 'grayscale', overflowWrap: 'anywhere', padding: 'var(--space-6)', WebkitFontSmoothing: 'antialiased' }}>
+      <div style={{ boxSizing: 'border-box', color: 'var(--muted)', fontFamily: '"Geist", system-ui, sans-serif', fontSize: 'var(--text-xs)', lineHeight: 'var(--leading)' }}>
+        button/basic
+      </div>
+      <div style={{ alignItems: 'center', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ alignItems: 'center', backgroundColor: 'var(--surface-1)', borderRadius: 'var(--radius-control)', boxShadow: 'var(--ink) 0px 0px 0px 1px inset, #17171729 0px 2px 3px -1px', boxSizing: 'border-box', display: 'flex', flexShrink: '0', height: 'var(--size)', justifyContent: 'center', paddingBlock: '1px', paddingInline: '14px', textAlign: 'center' }}>
+          <div style={{ boxSizing: 'border-box', color: 'var(--ink)', fontFamily: '"Geist", system-ui, sans-serif', fontSize: 'var(--text-md)', fontWeight: 500, lineHeight: 'var(--leading)', textAlign: 'center', whiteSpace: 'pre' }}>
+            Button
+          </div>
+        </div>
+      </div>
+    </div>
+  )

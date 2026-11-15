@@ -1,0 +1,5 @@
+Frame "button/basic" (2LY-0) 120×115
+  Text "caption" (2LZ-0) 72×21 "button/basic"
+  Frame "preview" (2M0-0) 72×34
+    Frame "button" (2M1-0) 72×34
+      Text "Button" (2M2-0) 44×21 "Button"

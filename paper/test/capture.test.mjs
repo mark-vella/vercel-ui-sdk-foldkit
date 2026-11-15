@@ -32,12 +32,13 @@ const capture = (html) =>
 const elementTag = ({ html }, slot) =>
   html.match(new RegExp(`<div layer-name="${slot}"[^>]*>`))?.[0]
 
-const layer = ({ layers }, slot) => layers.find(({ name }) => name === slot)
+const layer = ({ layers }, path) => layers.find((entry) => entry.layer === path)
 
 const unsupportedAt = ({ unsupported }, path) =>
   unsupported
     .filter(({ layer }) => layer === path)
     .map(({ property }) => property)
+    .toSorted()
 
 describe("the capture page", () => {
   test("runs examples that need a secure context", async () => {
@@ -60,8 +61,8 @@ describe("the capture page", () => {
     )
     assert.deepEqual(
       {
-        width: layer(result, "code").width,
-        height: layer(result, "code").height,
+        width: layer(result, layerPath("code")).width,
+        height: layer(result, layerPath("code")).height,
       },
       { width: 60, height: 20 }
     )
@@ -73,35 +74,20 @@ describe("measured sizes", () => {
     const result = await capture(
       `<div data-slot="row" style="display: flex; flex-wrap: wrap; gap: 8px"><div style="width: 100px; height: 20px; flex-shrink: 0"></div><div style="width: 100px; height: 20px; flex-shrink: 0"></div></div>`
     )
-    const { width, height } = layer(result, "row")
+    const { width, height } = layer(result, layerPath("row"))
     assert.deepEqual({ width, height }, { width: 208, height: 20 })
   })
 
-  test("count the text nodes stacked in a column", async () => {
+  test("include an svg as a layer of its own", async () => {
     const result = await capture(
-      `<div data-slot="stack" style="display: flex; flex-direction: column"><div>One</div><div>Two</div></div>`
+      `<style>[data-slot="x"] svg { width: 16px; height: 16px }</style><div data-slot="x" style="display: flex"><svg width="24" height="24" viewBox="0 0 24 24"></svg></div>`
     )
-    const { textRows, textColumns } = layer(result, "stack")
-    assert.deepEqual({ textRows, textColumns }, { textRows: 2, textColumns: 1 })
-    assert.equal(layer(result, "fixture/case").textRows, 3)
-  })
-
-  test("count the text nodes side by side in a row", async () => {
-    const result = await capture(
-      `<div data-slot="row" style="display: flex; gap: 8px"><div>One</div><div>Two</div></div>`
-    )
-    const { textRows, textColumns } = layer(result, "row")
-    assert.deepEqual({ textRows, textColumns }, { textRows: 1, textColumns: 2 })
-  })
-})
-
-describe("measured text counts", () => {
-  test("include the text that sets a stretched layer's width", async () => {
-    const result = await capture(
-      `<div data-slot="column" style="display: flex; flex-direction: column"><div data-slot="title">T</div><div style="display: flex; gap: 8px"><div>One</div><div>Two</div></div></div>`
-    )
-    const { textRows, textColumns } = layer(result, "title")
-    assert.deepEqual({ textRows, textColumns }, { textRows: 1, textColumns: 2 })
+    assert.deepEqual(layer(result, `${layerPath("x")} > svg`), {
+      layer: `${layerPath("x")} > svg`,
+      kind: "svg",
+      width: 16,
+      height: 16,
+    })
   })
 })
 
@@ -222,12 +208,12 @@ describe("what the flattener does not emit", () => {
     [
       "margin",
       `style="display: flex; margin: 8px"`,
-      ["margin-top", "margin-right", "margin-bottom", "margin-left"],
+      ["margin-bottom", "margin-left", "margin-right", "margin-top"],
     ],
     [
       "position",
       `style="display: flex; position: relative; top: 5px"`,
-      ["position"],
+      ["bottom", "left", "position", "right", "top"],
     ],
     [
       "a transform",
@@ -309,10 +295,74 @@ describe("what the flattener does not emit", () => {
       `<style>[data-slot="x"] svg { width: 16px; height: 16px }</style><div data-slot="x" style="display: flex; color: var(--danger)"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M0 0h24v24H0z" fill="currentColor"/></svg></div>`
     )
     assert.deepEqual(unsupportedAt(result, `${layerPath("x")} > svg`), [
-      "width",
-      "height",
       "color",
+      "height",
+      "width",
     ])
+  })
+
+  const paints = [
+    [
+      "an image",
+      `<img data-slot="x" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="20">`,
+      ["aspect-ratio", "element"],
+    ],
+    [
+      "tabular numbers",
+      `<div data-slot="x" style="font-variant-numeric: tabular-nums">10:45</div>`,
+      ["font-variant-numeric"],
+    ],
+    [
+      "a decoration colour from a token",
+      `<div data-slot="x" style="text-decoration: underline; text-decoration-color: var(--line)">Link</div>`,
+      ["text-decoration-color"],
+    ],
+    [
+      "a clip path",
+      `<div data-slot="x" style="width: 20px; height: 20px; clip-path: inset(0 50% 0 0)"></div>`,
+      ["clip-path"],
+    ],
+    [
+      "a filter",
+      `<div data-slot="x" style="width: 20px; height: 20px; filter: blur(2px)"></div>`,
+      ["filter"],
+    ],
+    [
+      "the basis of flex: 1",
+      `<div data-slot="x" style="flex: 1">Grow</div>`,
+      ["flex-basis"],
+    ],
+  ]
+  for (const [label, html, expected] of paints) {
+    test(`records ${label}`, async () => {
+      const result = await capture(html)
+      assert.deepEqual(unsupportedAt(result, layerPath("x")), expected)
+    })
+  }
+
+  test("records a CSS stroke on an svg path", async () => {
+    const result = await capture(
+      `<style>[data-slot="x"] path { stroke: var(--danger) }</style><div data-slot="x" style="display: flex"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M0 0h24v24H0z" fill="none" stroke="black"/></svg></div>`
+    )
+    assert.deepEqual(result.unsupported, [
+      {
+        layer: `${layerPath("x")} > svg > path`,
+        property: "stroke",
+        value: "rgb(214, 0, 32)",
+      },
+    ])
+  })
+
+  test("records nothing for a min-width that does not bind", async () => {
+    const result = await capture(
+      `<div style="display: flex"><div data-slot="x" style="min-width: 0">Text</div></div>`
+    )
+    assert.deepEqual(result.unsupported, [])
+  })
+
+  test("records nothing for an input's default overflow", async () => {
+    const result = await capture(`<input data-slot="x">`)
+    assert.deepEqual(result.unsupported, [])
   })
 
   test("records nothing for a plain flex element", async () => {

@@ -1,0 +1,8 @@
+Frame "probe/leading" (2MQ-0) 168×193
+  Text "caption" (2MR-0) 120×17 "probe/leading"
+  Frame "preview" (2MS-0) 120×116
+    Frame "stack" (2MT-0) 86×63
+      Text "trigger" (2MU-0) 86×21 "Section one"
+      Text "trigger" (2MV-0) 86×21 "Section two"
+      Text "trigger" (2MW-0) 86×21 "Section three"
+    Text "para" (2MX-0) 120×41 "Shipping takes five to seven days."

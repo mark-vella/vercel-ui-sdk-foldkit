@@ -1,0 +1,10 @@
+Frame "probe/border" (2NC-0) 288×210
+  Text "caption" (2ND-0) 240×17 "probe/border"
+  Frame "preview" (2NE-0) 240×133
+    Frame "list" (2NF-0) 240×76
+      Frame "item" (2NG-0) 240×38
+        Text "First" (2NH-0) 224×21 "First"
+      Frame "item" (2NI-0) 240×38
+        Text "Second" (2NJ-0) 224×21 "Second"
+    Frame "card" (2NK-0) 56×45
+      Text "Card" (2NL-0) 31×20 "Card"
