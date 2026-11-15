@@ -24,6 +24,7 @@ const files = execFileSync(
     "*.mjs",
     "*.vue",
     "*.svelte",
+    ":(exclude)repos",
   ],
   { cwd: root, encoding: "utf8" }
 )

@@ -167,7 +167,8 @@ function changedLines() {
     "--diff-filter=d",
     base,
     "--",
-    "."
+    ".",
+    ":(exclude)repos"
   ).split("\n")) {
     if (line.startsWith("+++ ")) {
       file = line.slice(6)
@@ -187,7 +188,10 @@ function changedLines() {
     "ls-files",
     "--others",
     "--exclude-standard",
-    "-z"
+    "-z",
+    "--",
+    ".",
+    ":(exclude)repos"
   ).split("\0")) {
     if (
       !sourceFile.test(untracked) ||

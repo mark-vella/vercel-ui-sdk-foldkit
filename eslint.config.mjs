@@ -34,7 +34,14 @@ const svelteFiles = [
 ]
 
 const config = [
-  { ignores: ["**/dist/**", "**/node_modules/**", "**/.svelte-kit/**"] },
+  {
+    ignores: [
+      "**/dist/**",
+      "**/node_modules/**",
+      "**/.svelte-kit/**",
+      "repos/**",
+    ],
+  },
   {
     files: [...react, ...solidFiles],
     languageOptions: { parser: tseslint.parser },

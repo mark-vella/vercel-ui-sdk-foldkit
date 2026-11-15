@@ -100,6 +100,8 @@ const exportsAtEndSkips = {
     "Next.js reads route config like `dynamic` only from an `export const` where it's declared.",
   "apps/docs/proxy.ts":
     "Next.js reads the proxy's `config` only from an `export const` where it's declared.",
+  "repos/":
+    "Vendored reference code from other projects, kept as upstream wrote it.",
 }
 const exportsAtEndCovers = ["examples/experiments/", "examples/scripts/"]
 
