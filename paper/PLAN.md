@@ -113,7 +113,7 @@ Each variant frame carries a caption text node equal to its name. `find_nodes` s
 | ID  | Outcome                                                                                                             | Needs  | Check that can fail                                                                                                                                                                                          |
 | --- | ------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | U0  | Preflight. Dependencies installed, Chromium present, Paper Desktop open on the file, roles resolved, runner chosen. | none   | `pnpm install` exits 0. The stdio probe lists Paper's tools. `orchestrator_capabilities` names an Opus 5.5 high selection. The tool catalog is searched once for a codemode tool and the result is recorded. |
-| U1  | Tokens from code are in Paper. The MCP client and the read, diff, write pattern exist.                              | U0     | `get_tokens` in CSS form equals the generated expected file. A second `sync tokens` makes 0 writes.                                                                                                          |
+| U1  | Tokens from code are in Paper. The MCP client and the read, diff, write pattern exist.                              | U0     | `verify tokens` exits 0, meaning every code token matches Paper by name, type and value. Tokens only in Paper are listed, not failed. A second `sync tokens` makes 0 writes.                                 |
 | U2  | Tracer. `button/basic` goes capture, flatten, sync, into a scratch Paper file.                                      | U1     | Frame and part sizes equal the source within 1px. Layer names equal the `data-slot` list. `find_nodes` on `--ink` returns the bound nodes. The screenshot matches side by side.                              |
 | U3  | Census. Every web example is rendered once and classified.                                                          | U2     | `paper/out/census.json` accounts for all 574 files with a status, a dedupe hash and its unsupported cases. No file is missing.                                                                               |
 | U4  | The flattener handles each case class the census found.                                                             | U3     | One representative per class passes the U2 checks in the scratch file. The census rerun shows no unhandled class.                                                                                            |
@@ -171,7 +171,7 @@ The exact provider instance for Opus 5.5 high is a kickoff obligation, resolved 
 | Claim                                               | Observation                                                                                                                                        | When and where                                | Status                                                                                   |
 | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | The Paper file is empty                             | `open_file` returned 1 page `Page 1`, 0 artboards, 0 tokens                                                                                        | 2026-11-15, file `01M7F5MBD4CPPWD9P0G739TERM` | supported                                                                                |
-| A Node script can call Paper's MCP without an agent | Spawned `~/.paper/bin/paper mcp`. `initialize` answered `paper-desktop 0.0.1`. `tools/list` returned 41 tools. `get_basic_info` answered in 49 ms. | 2026-11-15, read calls only                   | supported for reads. Writes are U1's gate.                                               |
+| A Node script can call Paper's MCP without an agent | Spawned `~/.paper/bin/paper mcp`. `initialize` answered `paper-desktop 0.0.1`. `tools/list` returned 41 tools. `get_basic_info` answered in 49 ms. | 2026-11-15, read calls only                   | supported for reads and writes. U1 created and updated tokens through it.                |
 | Paper's HTML subset                                 | `write_html` description: inline styles, flex, no margin, grid, tables or `display: inline`                                                        | 2026-11-15                                    | supported as documented. Behaviour on a violation is unverified.                         |
 | Catalogue size                                      | 55 docs pages, 54 example folders, 574 web example files, 502 examples referenced by the web docs                                                  | `fa82f52`, shell counts                       | supported                                                                                |
 | The CSS needs flattening                            | Source lines across `examples/styles` and component CSS: grid 39, margin 153, pseudo-elements 29, `position: fixed` 5, of 10,494 lines             | `fa82f52`, `grep -c`                          | supported. These count source lines, not rendered elements. U3 gives the rendered count. |
@@ -186,15 +186,17 @@ The exact provider instance for Opus 5.5 high is a kickoff obligation, resolved 
 
 ## Decisions
 
-| Decision         | Options                                          | Chosen and why                                                                                                                           | Who                 |
-| ---------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
-| Import mechanism | A, B, C above                                    | C. It is the only one where no payload passes through a model and a rerun converges.                                                     | agent, reversible   |
-| Kit source       | New `ui-kit/` or existing `examples/`            | `examples/`. It already holds the tokens and styles for every component.                                                                 | agent, pending Mark |
-| Variant set      | All 574 files or docs-referenced, deduplicated   | Docs-referenced, deduplicated, plus states. The docs already curate and caption them.                                                    | agent, pending Mark |
-| Page layout      | One components page or one per category          | One page, alphabetical. The docs have no categories, so any grouping would be invented.                                                  | agent, reversible   |
-| Theme            | Light, or light and dark                         | Light.                                                                                                                                   | agent, pending Mark |
-| Tracer target    | Kit file or a scratch file                       | A scratch file named `ui-sdk probe`, archived when U2 passes. Archiving is reversible.                                                   | agent, pending Mark |
-| Sync runner      | Local Node program, or a sandboxed codemode tool | Local Node program. It is verified and it reads `paper/out/`. A sandboxed runner takes the computed-payload units when one is available. | agent, pending Mark |
+| Decision             | Options                                          | Chosen and why                                                                                                                               | Who                       |
+| -------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| Import mechanism     | A, B, C above                                    | C. It is the only one where no payload passes through a model and a rerun converges.                                                         | agent, reversible         |
+| Kit source           | New `ui-kit/` or existing `examples/`            | `examples/`. It already holds the tokens and styles for every component.                                                                     | agent, pending Mark       |
+| Variant set          | All 574 files or docs-referenced, deduplicated   | Docs-referenced, deduplicated, plus states. The docs already curate and caption them.                                                        | agent, pending Mark       |
+| Page layout          | One components page or one per category          | One page, alphabetical. The docs have no categories, so any grouping would be invented.                                                      | agent, reversible         |
+| Theme                | Light, or light and dark                         | Light.                                                                                                                                       | agent, pending Mark       |
+| Tracer target        | Kit file or a scratch file                       | A scratch file named `ui-sdk probe`, archived when U2 passes. Archiving is reversible.                                                       | agent, pending Mark       |
+| Tokens only in Paper | Fail `verify`, or list them                      | List them. `sync` never deletes, so failing would leave `verify` red for good. The cost: a token renamed in code leaves its old name behind. | agent, reviewer agreed    |
+| Type of `--size-*`   | `spacing` or `container`                         | `spacing`. Both kept the binding, but Paper's Tailwind export lost it for `container`.                                                       | agent, from a probe in U1 |
+| Sync runner          | Local Node program, or a sandboxed codemode tool | Local Node program. It is verified and it reads `paper/out/`. A sandboxed runner takes the computed-payload units when one is available.     | agent, pending Mark       |
 
 ## Progress
 
@@ -207,16 +209,24 @@ The exact provider instance for Opus 5.5 high is a kickoff obligation, resolved 
 | Unit | Status  | Head      | Notes                                                                                                                                                    |
 | ---- | ------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | U0   | done    | `fa82f52` | `pnpm install --frozen-lockfile` exit 0. Chromium 153 launches through Playwright. Paper probe lists 41 tools. Defaults taken for the pending decisions. |
-| U1   | active  |           |                                                                                                                                                          |
-| U2   | pending |           |                                                                                                                                                          |
+| U1   | done    | `f3d94ed` | 36 tokens synced to the scratch file, 7 skipped. Repeat sync makes 0 writes. Verify exits 0 and fails on drift. Review `APPROVE` on patch id `f5c98d8`.  |
+| U2   | active  |           |                                                                                                                                                          |
 | U3   | pending |           |                                                                                                                                                          |
 | U4   | pending |           |                                                                                                                                                          |
 | U5   | pending |           |                                                                                                                                                          |
-| U6   | pending |           |                                                                                                                                                          |
+| U6   | active  |           | Runs beside U2 in its own checkout, on the scratch file `ui-sdk probe pages`, id `01M7GD588B93A45SFHNMBJVRMX`.                                           |
 | U7   | pending |           |                                                                                                                                                          |
 | U8   | pending |           |                                                                                                                                                          |
 | U9   | pending |           |                                                                                                                                                          |
 | U10  | pending |           |                                                                                                                                                          |
+
+## Follow-ups
+
+Deferred nits from review. None blocks a unit.
+
+- `paper/paper-client.mjs`: `close()` waits forever if the relay ignores both stdin EOF and SIGTERM. Send SIGKILL and resolve after the grace period. From the U1 review.
+- `paper/tokens.mjs`: the `--size` prefix has no trailing hyphen, and a colour named like `--text-muted` would be typed as a font size. From the U1 review.
+- `paper/paper-client.mjs`: the line splitter assigns inside the `while` condition, and `failAll` leaves request timers running. From the U1 review.
 
 ## Artifact index
 
