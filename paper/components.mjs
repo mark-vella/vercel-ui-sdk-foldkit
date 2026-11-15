@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url"
 import { readPaperTokens } from "./tokens.mjs"
 
 const outFolder = fileURLToPath(new URL("./out/", import.meta.url))
-const tolerance = 1
 const artboardStyles = {
   width: "400px",
   height: "400px",
@@ -54,13 +53,33 @@ const parseProvenance = (text) =>
     )
   )
 
-const fingerprint = async (paper, fileId, nodeId) => {
+const readSubtree = async (paper, fileId, node) => {
+  if (node.childCount === 0) {
+    return [node]
+  }
+  const { children } = await paper.call("get_children", {
+    fileId,
+    nodeId: node.id,
+  })
+  const descendants = []
+  for (const child of children) {
+    descendants.push(...(await readSubtree(paper, fileId, child)))
+  }
+  return [node, ...descendants]
+}
+
+const readPaperFrame = async (paper, fileId, frame) => {
   const jsx = await paper.call("get_jsx", {
     fileId,
-    nodeId,
+    nodeId: frame.id,
     includeNodeIds: false,
   })
-  return createHash("sha256").update(jsx).digest("hex").slice(0, 12)
+  const nodes = await readSubtree(paper, fileId, frame)
+  const fingerprint = createHash("sha256")
+    .update([jsx, ...nodes.map(({ name }) => name)].join("\n"))
+    .digest("hex")
+    .slice(0, 12)
+  return { nodes, fingerprint }
 }
 
 const readArtboards = async (paper, fileId) => {
@@ -131,7 +150,7 @@ const syncComponents = async (paper, fileId, names) => {
       if (
         frame &&
         entry?.source === source &&
-        entry.paper === (await fingerprint(paper, fileId, frame.id))
+        entry.paper === (await readPaperFrame(paper, fileId, frame)).fingerprint
       ) {
         console.log(`${sidecar.name}: unchanged`)
         continue
@@ -150,13 +169,13 @@ const syncComponents = async (paper, fileId, names) => {
       }
       hashes.set(sidecar.name, {
         source,
-        paper: await fingerprint(paper, fileId, written.id),
+        paper: (await readPaperFrame(paper, fileId, written)).fingerprint,
       })
       console.log(
         `${sidecar.name}: ${frame ? "replaced" : "created"}, ${source}`
       )
     }
-    if (writes > writesBefore || !provenance) {
+    if (writes > writesBefore) {
       const text = escapeText(formatProvenance(group[0].sidecar, hashes))
       if (provenance) {
         await write("set_text_content", {
@@ -170,6 +189,11 @@ const syncComponents = async (paper, fileId, names) => {
         })
       }
     }
+    if (provenance && children.at(-1).id !== provenance.id) {
+      await write("move_nodes", {
+        moves: [{ nodeId: provenance.id, parentId: artboard.id }],
+      })
+    }
     if (writes > writesBefore) {
       await paper.call("finish_working_on_nodes", {
         fileId,
@@ -178,21 +202,6 @@ const syncComponents = async (paper, fileId, names) => {
     }
   }
   console.log(`writes ${writes}`)
-}
-
-const readSubtree = async (paper, fileId, node) => {
-  if (node.childCount === 0) {
-    return [node]
-  }
-  const { children } = await paper.call("get_children", {
-    fileId,
-    nodeId: node.id,
-  })
-  const descendants = []
-  for (const child of children) {
-    descendants.push(...(await readSubtree(paper, fileId, child)))
-  }
-  return [node, ...descendants]
 }
 
 const checkLayers = async (paper, fileId, nodes, sidecar, differ) => {
@@ -211,12 +220,15 @@ const checkLayers = async (paper, fileId, nodes, sidecar, differ) => {
       fileId,
       nodeId: found[index].id,
     })
-    const delta = Math.max(
+    const [widthDelta, heightDelta] = [
       Math.abs(width - layer.width),
-      Math.abs(height - layer.height)
-    )
-    largest = Math.max(largest, delta)
-    if (delta > tolerance) {
+      Math.abs(height - layer.height),
+    ]
+    largest = Math.max(largest, widthDelta, heightDelta)
+    if (
+      widthDelta > Math.max(1, layer.textColumns) ||
+      heightDelta > Math.max(1, layer.textRows)
+    ) {
       differ(
         `${layer.name} is ${width}x${height} in Paper, ${layer.width}x${layer.height} in capture`
       )
@@ -265,7 +277,12 @@ const checkBindings = async (paper, fileId, frame, sidecar, differ) => {
   }
 }
 
-const checkLiteralColors = async (paper, fileId, frame, tokens, differ) => {
+const checkLiteralColors = async (
+  paper,
+  fileId,
+  { frame, tokens, sidecar },
+  differ
+) => {
   const values = new Set(
     tokens
       .filter(
@@ -279,12 +296,18 @@ const checkLiteralColors = async (paper, fileId, frame, tokens, differ) => {
       nodeId: frame.id,
       filters: [{ styleValue: value }],
     })
-    for (const { name, matched } of nodes) {
-      for (const { styleName, styleValue } of matched) {
-        if (!styleValue.startsWith("var(")) {
-          differ(`${name} has ${styleName} ${styleValue}, a token's value`)
-        }
-      }
+    const literals = nodes.flatMap(({ name, matched }) =>
+      matched
+        .filter(({ styleValue }) => !styleValue.startsWith("var("))
+        .map(({ styleName }) => `${name} ${styleName}`)
+    )
+    const authored = sidecar.literals.filter(
+      (literal) => literal.value === value
+    ).length
+    if (literals.length !== authored) {
+      differ(
+        `${value} is a literal on ${literals.length} styles in Paper (${literals.join(", ")}), ${authored} in capture`
+      )
     }
   }
 }
@@ -327,17 +350,17 @@ const verifyComponents = async (paper, fileId, names) => {
     }
     const source = shortHash(sidecar)
     const entry = recorded.get(sidecar.name)
+    const { nodes, fingerprint } = await readPaperFrame(paper, fileId, frame)
     if (entry?.source !== source) {
       differ(
         `provenance records ${entry?.source ?? "no hash"}, capture is ${source}`
       )
-    } else if (entry.paper !== (await fingerprint(paper, fileId, frame.id))) {
+    } else if (entry.paper !== fingerprint) {
       differ("the frame was edited in Paper after the last sync")
     }
-    const nodes = await readSubtree(paper, fileId, frame)
     await checkLayers(paper, fileId, nodes, sidecar, differ)
     await checkBindings(paper, fileId, frame, sidecar, differ)
-    await checkLiteralColors(paper, fileId, frame, tokens, differ)
+    await checkLiteralColors(paper, fileId, { frame, tokens, sidecar }, differ)
     await saveScreenshot(paper, fileId, frame, sidecar)
   }
   for (const difference of differences) {

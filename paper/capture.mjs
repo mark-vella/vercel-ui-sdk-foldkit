@@ -12,15 +12,19 @@ const usage = "Usage: node paper/capture.mjs <component/example>..."
 const repo = fileURLToPath(new URL("..", import.meta.url))
 const built = path.join(repo, "apps/docs/public")
 const outFolder = path.join(repo, "paper/out")
-const origin = "http://capture.paper"
-const geist = path.join(
+const origin = "https://capture.paper"
+const geistFonts = path.join(
   path.dirname(
     createRequire(new URL("../apps/docs/", import.meta.url)).resolve(
       "geist/font"
     )
   ),
-  "fonts/geist-sans/Geist-Variable.woff2"
+  "fonts"
 )
+const fonts = new Map([
+  ["/fonts/geist.woff2", "geist-sans/Geist-Variable.woff2"],
+  ["/fonts/geist-mono.woff2", "geist-mono/GeistMono-Variable.woff2"],
+])
 const { chromium } = createRequire(new URL("../tests/", import.meta.url))(
   "@playwright/test"
 )
@@ -65,7 +69,8 @@ const pageHtml = (name, stylesheets) => `<!doctype html>
 <head>
 <style>
 @font-face { font-family: Geist; src: url(/fonts/geist.woff2) format("woff2"); font-weight: 100 900; }
-:root { color-scheme: light; --lightningcss-light: initial; --lightningcss-dark: ; }
+@font-face { font-family: "Geist Mono"; src: url(/fonts/geist-mono.woff2) format("woff2"); font-weight: 100 900; }
+:root { color-scheme: light; --font-geist-mono: "Geist Mono"; --lightningcss-light: initial; --lightningcss-dark: ; }
 body { display: flex; align-items: flex-start; margin: 0; font-family: Geist; }
 *, *::before, *::after { transition: none !important; animation: none !important; }
 @layer utilities {
@@ -82,16 +87,16 @@ ${stylesheets.map((href) => `<link rel="stylesheet" href="${href}">`).join("\n")
 </body>
 </html>`
 
-const serve = (page, files) =>
+const serve = (page, { html, root }) =>
   page.route(`${origin}/**`, (route) => {
     const { pathname } = new URL(route.request().url())
     if (pathname === "/") {
-      return route.fulfill({ contentType: "text/html", body: files.html })
+      return route.fulfill({ contentType: "text/html", body: html })
     }
-    if (pathname === "/fonts/geist.woff2") {
-      return route.fulfill({ path: geist })
+    if (fonts.has(pathname)) {
+      return route.fulfill({ path: path.join(geistFonts, fonts.get(pathname)) })
     }
-    return route.fulfill({ path: path.join(built, pathname) })
+    return route.fulfill({ path: path.join(root, pathname) })
   })
 
 const mountExample = (page, { script, mount }) =>
@@ -102,13 +107,39 @@ const mountExample = (page, { script, mount }) =>
         import(mount),
       ])
       framework.mount(module, document.querySelector(".example-content"))
+    },
+    { script, mount }
+  )
+
+const launchBrowser = () =>
+  chromium.launch({ args: ["--font-render-hinting=none"] })
+
+const captureFrame = async (
+  browser,
+  { name, root, stylesheets, mount, tokens }
+) => {
+  const page = await browser.newPage({
+    colorScheme: "light",
+    viewport: { width: 1280, height: 800 },
+    deviceScaleFactor: 2,
+  })
+  try {
+    await serve(page, { html: pageHtml(name, stylesheets), root })
+    await page.goto(`${origin}/`)
+    await mount(page)
+    await page.evaluate(async () => {
       await document.fonts.ready
       await new Promise((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(resolve))
       )
-    },
-    { script, mount }
-  )
+    })
+    const flat = await flattenFrame(page, tokens)
+    const png = await page.locator("[data-example]").screenshot()
+    return { ...flat, png }
+  } finally {
+    await page.close()
+  }
+}
 
 const readCommit = () => {
   const git = (...args) =>
@@ -120,62 +151,64 @@ const readCommit = () => {
 }
 
 const captureExample = async (browser, { name, example, tokens, commit }) => {
-  const page = await browser.newPage({
-    colorScheme: "light",
-    viewport: { width: 1280, height: 800 },
-    deviceScaleFactor: 2,
+  const flat = await captureFrame(browser, {
+    name,
+    root: built,
+    stylesheets: example.stylesheets,
+    mount: (page) => mountExample(page, example),
+    tokens,
   })
+  const base = path.join(outFolder, name)
+  await mkdir(path.dirname(base), { recursive: true })
+  const sidecar = {
+    name,
+    ...commit,
+    sources: example.sources,
+    hash: createHash("sha256").update(flat.html).digest("hex"),
+    frame: flat.frame,
+    layers: flat.layers,
+    bindings: flat.bindings,
+    unbound: flat.unbound,
+    literals: flat.literals,
+    unsupported: flat.unsupported,
+  }
+  await writeFile(`${base}.png`, flat.png)
+  await writeFile(`${base}.html`, `${flat.html}\n`)
+  await writeFile(`${base}.json`, `${JSON.stringify(sidecar, null, 2)}\n`)
+  return sidecar
+}
+
+if (import.meta.main) {
+  const { positionals: names } = parseArgs({ allowPositionals: true })
+  if (names.length === 0) {
+    console.error(usage)
+    process.exit(2)
+  }
+
+  const resolveExample = await readBuild()
+  const examples = names.map((name) => ({
+    name,
+    example: resolveExample(name),
+  }))
+  const { tokens } = await readCodeTokens()
+  const commit = readCommit()
+  const browser = await launchBrowser()
   try {
-    await serve(page, { html: pageHtml(name, example.stylesheets) })
-    await page.goto(`${origin}/`)
-    await mountExample(page, example)
-    const flat = await flattenFrame(page, tokens)
-    const base = path.join(outFolder, name)
-    await mkdir(path.dirname(base), { recursive: true })
-    await page.locator("[data-example]").screenshot({ path: `${base}.png` })
-    const sidecar = {
-      name,
-      ...commit,
-      sources: example.sources,
-      hash: createHash("sha256").update(flat.html).digest("hex"),
-      frame: flat.frame,
-      layers: flat.layers,
-      bindings: flat.bindings,
-      unbound: flat.unbound,
-      unsupported: flat.unsupported,
+    for (const { name, example } of examples) {
+      const sidecar = await captureExample(browser, {
+        name,
+        example,
+        tokens,
+        commit,
+      })
+      const { width, height } = sidecar.frame
+      console.log(
+        `${name}: ${width}x${height}, ${sidecar.layers.length} layers, ${sidecar.bindings.length} bindings, ${sidecar.unbound.length} unbound, ${sidecar.unsupported.length} unsupported, ${sidecar.hash.slice(0, 12)}`
+      )
     }
-    await writeFile(`${base}.html`, `${flat.html}\n`)
-    await writeFile(`${base}.json`, `${JSON.stringify(sidecar, null, 2)}\n`)
-    return sidecar
   } finally {
-    await page.close()
+    await browser.close()
   }
 }
 
-const { positionals: names } = parseArgs({ allowPositionals: true })
-if (names.length === 0) {
-  console.error(usage)
-  process.exit(2)
-}
-
-const resolveExample = await readBuild()
-const examples = names.map((name) => ({ name, example: resolveExample(name) }))
-const { tokens } = await readCodeTokens()
-const commit = readCommit()
-const browser = await chromium.launch({ args: ["--font-render-hinting=none"] })
-try {
-  for (const { name, example } of examples) {
-    const sidecar = await captureExample(browser, {
-      name,
-      example,
-      tokens,
-      commit,
-    })
-    const { width, height } = sidecar.frame
-    console.log(
-      `${name}: ${width}x${height}, ${sidecar.layers.length} layers, ${sidecar.bindings.length} bindings, ${sidecar.unbound.length} unbound, ${sidecar.unsupported.length} unsupported, ${sidecar.hash.slice(0, 12)}`
-    )
-  }
-} finally {
-  await browser.close()
-}
+export { captureFrame, launchBrowser }
