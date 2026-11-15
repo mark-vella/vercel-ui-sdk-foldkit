@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util"
 import { verifyComponents } from "./components.mjs"
-import { verifyPages } from "./pages.mjs"
+import { verifyFoundations } from "./foundations.mjs"
+import { MissingPageError, verifyPages } from "./pages.mjs"
 import { connectPaper } from "./paper-client.mjs"
 import {
   describeToken,
@@ -11,8 +12,9 @@ import {
 
 const usage = `Usage: node paper/verify.mjs <tokens|pages> --file <id>
        scripts/test-slot.sh node paper/verify.mjs components <component/example>... --file <id>
+       scripts/test-slot.sh node paper/verify.mjs foundations --file <id>
 
-components renders each frame's export from Paper in Chromium.`
+components and foundations render each frame's export from Paper in Chromium.`
 
 const verifyTokens = async (paper, fileId) => {
   const { tokens: expected } = await readCodeTokens()
@@ -43,6 +45,7 @@ const commands = new Map([
   ["tokens", verifyTokens],
   ["pages", verifyPages],
   ["components", verifyComponents],
+  ["foundations", verifyFoundations],
 ])
 const [commandName, ...names] = positionals
 const command = commands.get(commandName)
@@ -55,6 +58,12 @@ if (!command || lacksNames || !values.file) {
 const paper = await connectPaper()
 try {
   process.exitCode = (await command(paper, values.file, names)) ? 0 : 1
+} catch (error) {
+  if (!(error instanceof MissingPageError)) {
+    throw error
+  }
+  console.error(error.message)
+  process.exitCode = 1
 } finally {
   await paper.close()
 }

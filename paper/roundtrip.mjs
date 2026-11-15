@@ -4,7 +4,7 @@ import { captureFrame } from "./capture.mjs"
 
 const repo = fileURLToPath(new URL("..", import.meta.url))
 const { transformSync } = createRequire(import.meta.url)("esbuild")
-const treeLine = /^( *)(\S+) ("(?:[^"\\]|\\.)*") \(([^)]+)\)(.*)$/
+const treeLine = /^( *)(\S+) "(.*?)" \(([\w-]+)\)(.*)$/
 const elidedLine = /^ *\.\.\. \d+ children$/
 
 const parseTree = (summary) => {
@@ -18,7 +18,7 @@ const parseTree = (summary) => {
     const [, indent, type, name, id, rest] = line.match(treeLine)
     const node = {
       type,
-      name: JSON.parse(name),
+      name,
       id,
       isHidden: rest.endsWith(" [hidden]"),
       isElided: false,

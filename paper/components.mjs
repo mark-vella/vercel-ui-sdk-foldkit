@@ -3,10 +3,16 @@ import { copyFile, readFile, rm } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { launchBrowser } from "./capture.mjs"
+import { findPageId } from "./pages.mjs"
 import { checkExport, flattenTree, parseTree } from "./roundtrip.mjs"
 import { readCodeTokens } from "./tokens.mjs"
 
-const outFolder = fileURLToPath(new URL("./out/", import.meta.url))
+const components = {
+  label: "components",
+  page: "02 Components",
+  outFolder: fileURLToPath(new URL("./out/", import.meta.url)),
+  source: (sidecar) => path.dirname(path.dirname(sidecar.sources[0])),
+}
 const artboardStyles = {
   width: "400px",
   height: "400px",
@@ -21,7 +27,7 @@ const provenanceStyle =
   "font-family: var(--mono); font-size: var(--text-xs); line-height: var(--leading); color: var(--muted); white-space: pre-wrap"
 
 const readCapture = async (name) => {
-  const base = path.join(outFolder, name)
+  const base = path.join(components.outFolder, name)
   const [html, sidecar] = await Promise.all([
     readFile(`${base}.html`, "utf8"),
     readFile(`${base}.json`, "utf8"),
@@ -34,11 +40,10 @@ const shortHash = (sidecar) => sidecar.hash.slice(0, 12)
 const escapeText = (text) =>
   text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 
-const formatProvenance = (sidecar, hashes) => {
-  const [example] = sidecar.sources
+const formatProvenance = (source, sidecar, hashes) => {
   const commit = `${sidecar.commit.slice(0, 12)}${sidecar.dirty ? " with uncommitted changes" : ""}`
   return [
-    `source ${path.dirname(path.dirname(example))}`,
+    `source ${source}`,
     `commit ${commit}`,
     ...[...hashes]
       .sort()
@@ -80,14 +85,10 @@ const readPaperFrame = async (paper, fileId, frame) => {
   return { jsx, tree, fingerprint }
 }
 
-const readArtboards = async (paper, fileId) => {
-  const info = await paper.call("get_basic_info", { fileId })
-  const page = info.pages.find(({ type }) => type === "page")
-  const { artboards } =
-    page.id === info.pageId
-      ? info
-      : await paper.call("get_basic_info", { fileId, pageId: page.id })
-  return { pageId: page.id, artboards }
+const readArtboards = async (paper, fileId, page) => {
+  const pageId = await findPageId(paper, fileId, page)
+  const { artboards } = await paper.call("get_basic_info", { fileId, pageId })
+  return { pageId, artboards }
 }
 
 const readArtboard = async (paper, fileId, artboardId) => {
@@ -105,9 +106,8 @@ const readArtboard = async (paper, fileId, artboardId) => {
   return { children, provenance, recorded }
 }
 
-const syncComponents = async (paper, fileId, names) => {
-  const captures = await Promise.all(names.map(readCapture))
-  const { pageId, artboards } = await readArtboards(paper, fileId)
+const syncFrames = async (paper, fileId, { page, source, captures }) => {
+  const { pageId, artboards } = await readArtboards(paper, fileId, page)
   let writes = 0
   const write = (tool, args) => {
     writes++
@@ -174,7 +174,9 @@ const syncComponents = async (paper, fileId, names) => {
       )
     }
     if (writes > writesBefore) {
-      const text = escapeText(formatProvenance(group[0].sidecar, hashes))
+      const text = escapeText(
+        formatProvenance(source(group[0].sidecar), group[0].sidecar, hashes)
+      )
       if (provenance) {
         await write("set_text_content", {
           updates: [{ nodeId: provenance.id, html: text }],
@@ -202,7 +204,13 @@ const syncComponents = async (paper, fileId, names) => {
   console.log(`writes ${writes}`)
 }
 
-const saveScreenshot = async (paper, fileId, frame, sidecar) => {
+const syncComponents = async (paper, fileId, names) =>
+  syncFrames(paper, fileId, {
+    ...components,
+    captures: await Promise.all(names.map(readCapture)),
+  })
+
+const saveScreenshot = async (paper, fileId, { frame, sidecar, outFolder }) => {
   const { exports } = await paper.call("export", {
     fileId,
     nodes: { [frame.id]: [{ format: "png", scale: "2x" }] },
@@ -216,7 +224,7 @@ const saveScreenshot = async (paper, fileId, frame, sidecar) => {
 }
 
 const verifyFrame = async (paper, fileId, context) => {
-  const { artboards, browser, tokens, sidecar } = context
+  const { artboards, browser, tokens, sidecar, outFolder } = context
   const component = componentOf(sidecar.name)
   const artboard = artboards.find(({ name }) => name === component)
   if (!artboard) {
@@ -250,36 +258,58 @@ const verifyFrame = async (paper, fileId, context) => {
   differences.push(
     ...(await checkExport(browser, { jsx, tree, sidecar, tokens }))
   )
-  await saveScreenshot(paper, fileId, frames[0], sidecar)
+  await saveScreenshot(paper, fileId, {
+    frame: frames[0],
+    sidecar,
+    outFolder,
+  })
   return differences
 }
 
-const verifyComponents = async (paper, fileId, names) => {
-  const captures = await Promise.all(names.map(readCapture))
-  const { artboards } = await readArtboards(paper, fileId)
-  const { tokens } = await readCodeTokens()
-  const browser = await launchBrowser()
+const verifyFrames = async (paper, fileId, context) => {
+  const { label, page, outFolder, captures, browser, tokens } = context
+  const { artboards } = await readArtboards(paper, fileId, page)
   const differences = []
-  try {
-    for (const { sidecar } of captures) {
-      const found = await verifyFrame(paper, fileId, {
-        artboards,
-        browser,
-        tokens,
-        sidecar,
-      })
-      differences.push(...found.map((text) => `${sidecar.name}: ${text}`))
-    }
-  } finally {
-    await browser.close()
+  for (const { sidecar } of captures) {
+    const found = await verifyFrame(paper, fileId, {
+      artboards,
+      browser,
+      tokens,
+      sidecar,
+      outFolder,
+    })
+    differences.push(...found.map((text) => `${sidecar.name}: ${text}`))
   }
   for (const difference of differences) {
     console.log(difference)
   }
   console.log(
-    `components: ${captures.length} checked, ${differences.length} differences`
+    `${label}: ${captures.length} checked, ${differences.length} differences`
   )
   return differences.length === 0
 }
 
-export { syncComponents, verifyComponents, verifyFrame }
+const verifyComponents = async (paper, fileId, names) => {
+  const captures = await Promise.all(names.map(readCapture))
+  const { tokens } = await readCodeTokens()
+  const browser = await launchBrowser()
+  try {
+    return await verifyFrames(paper, fileId, {
+      ...components,
+      captures,
+      browser,
+      tokens,
+    })
+  } finally {
+    await browser.close()
+  }
+}
+
+export {
+  escapeText,
+  syncComponents,
+  syncFrames,
+  verifyComponents,
+  verifyFrame,
+  verifyFrames,
+}

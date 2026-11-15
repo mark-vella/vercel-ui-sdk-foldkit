@@ -150,20 +150,12 @@ const readCommit = () => {
   }
 }
 
-const captureExample = async (browser, { name, example, tokens, commit }) => {
-  const flat = await captureFrame(browser, {
-    name,
-    root: built,
-    stylesheets: example.stylesheets,
-    mount: (page) => mountExample(page, example),
-    tokens,
-  })
-  const base = path.join(outFolder, name)
+const saveCapture = async (base, { name, commit, sources }, flat) => {
   await mkdir(path.dirname(base), { recursive: true })
   const sidecar = {
     name,
     ...commit,
-    sources: example.sources,
+    sources,
     hash: createHash("sha256").update(flat.html).digest("hex"),
     frame: flat.frame,
     layers: flat.layers,
@@ -176,6 +168,21 @@ const captureExample = async (browser, { name, example, tokens, commit }) => {
   await writeFile(`${base}.html`, `${flat.html}\n`)
   await writeFile(`${base}.json`, `${JSON.stringify(sidecar, null, 2)}\n`)
   return sidecar
+}
+
+const captureExample = async (browser, { name, example, tokens, commit }) => {
+  const flat = await captureFrame(browser, {
+    name,
+    root: built,
+    stylesheets: example.stylesheets,
+    mount: (page) => mountExample(page, example),
+    tokens,
+  })
+  return saveCapture(
+    path.join(outFolder, name),
+    { name, commit, sources: example.sources },
+    flat
+  )
 }
 
 if (import.meta.main) {
@@ -211,4 +218,4 @@ if (import.meta.main) {
   }
 }
 
-export { captureFrame, launchBrowser }
+export { captureFrame, launchBrowser, readCommit, saveCapture }

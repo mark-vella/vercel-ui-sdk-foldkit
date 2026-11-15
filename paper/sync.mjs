@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util"
 import { syncComponents } from "./components.mjs"
-import { syncPages } from "./pages.mjs"
+import { syncFoundations } from "./foundations.mjs"
+import { MissingPageError, syncPages } from "./pages.mjs"
 import { connectPaper } from "./paper-client.mjs"
 import {
   describeToken,
@@ -10,7 +11,8 @@ import {
 } from "./tokens.mjs"
 
 const usage = `Usage: node paper/sync.mjs <tokens|pages> --file <id>
-       node paper/sync.mjs components <component/example>... --file <id>`
+       node paper/sync.mjs components <component/example>... --file <id>
+       scripts/test-slot.sh node paper/sync.mjs foundations --file <id>`
 
 const assertApplied = (tool, { tokens }) => {
   const failed = tokens.filter((entry) => entry.result === "error")
@@ -72,6 +74,7 @@ const commands = new Map([
   ["tokens", syncTokens],
   ["pages", syncPages],
   ["components", syncComponents],
+  ["foundations", syncFoundations],
 ])
 const [commandName, ...names] = positionals
 const command = commands.get(commandName)
@@ -84,6 +87,12 @@ if (!command || lacksNames || !values.file) {
 const paper = await connectPaper()
 try {
   await command(paper, values.file, names)
+} catch (error) {
+  if (!(error instanceof MissingPageError)) {
+    throw error
+  }
+  console.error(error.message)
+  process.exitCode = 1
 } finally {
   await paper.close()
 }
