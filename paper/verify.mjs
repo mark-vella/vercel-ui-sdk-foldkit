@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util"
+import { verifyComponents } from "./components.mjs"
 import { connectPaper } from "./paper-client.mjs"
 import {
   describeToken,
@@ -7,7 +8,8 @@ import {
   readPaperTokens,
 } from "./tokens.mjs"
 
-const usage = "Usage: node paper/verify.mjs tokens --file <id>"
+const usage = `Usage: node paper/verify.mjs tokens --file <id>
+       node paper/verify.mjs components <component/example>... --file <id>`
 
 const verifyTokens = async (paper, fileId) => {
   const { tokens: expected } = await readCodeTokens()
@@ -34,14 +36,19 @@ const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: { file: { type: "string" } },
 })
-if (positionals[0] !== "tokens" || !values.file) {
+const [command, ...names] = positionals
+const isComponents = command === "components" && names.length > 0
+if ((command !== "tokens" && !isComponents) || !values.file) {
   console.error(usage)
   process.exit(2)
 }
 
 const paper = await connectPaper()
 try {
-  process.exitCode = (await verifyTokens(paper, values.file)) ? 0 : 1
+  const matches = isComponents
+    ? await verifyComponents(paper, values.file, names)
+    : await verifyTokens(paper, values.file)
+  process.exitCode = matches ? 0 : 1
 } finally {
   await paper.close()
 }

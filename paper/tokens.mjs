@@ -127,4 +127,10 @@ const diffTokens = (expected, actual) => {
 
 const describeToken = ({ type, value }) => `${type} ${value}`
 
-export { describeToken, diffTokens, readCodeTokens, readPaperTokens }
+export {
+  describeToken,
+  diffTokens,
+  readCodeTokens,
+  readPaperTokens,
+  toPaperColor,
+}
