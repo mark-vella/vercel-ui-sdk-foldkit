@@ -45,14 +45,19 @@ const readFrame = ({
   const emitted = new Set(emittedProperties.flatMap(longhands))
   const ignored = new Set(ignoredProperties.flatMap(longhands))
   const logical = new RegExp(logicalSource)
-  const compared = [...getComputedStyle(frame)].filter((property) => {
-    if (property.startsWith("--") || logical.test(property)) {
+  const listed = new Set(getComputedStyle(frame))
+  const compared = [...listed].filter((property) => {
+    if (
+      property.startsWith("--") ||
+      logical.test(property) ||
+      ignored.has(property)
+    ) {
       return false
     }
-    const [longhand, ...others] = longhands(property)
-    return (
-      longhand === property && others.length === 0 && !ignored.has(property)
-    )
+    // Chromium lists background-position but none of its longhands.
+    const parts = longhands(property)
+    const isLonghand = parts.length === 1 && parts[0] === property
+    return isLonghand || !parts.some((part) => listed.has(part))
   })
   const round = (length) => Math.round(length * 1000) / 1000
   const serialize = (property, value) => {
@@ -90,15 +95,7 @@ const readFrame = ({
 
   const host = document.head.appendChild(document.createElement("div"))
   const shadow = host.attachShadow({ mode: "open" })
-  const references = new Map()
-  // Creating a custom element would run its constructor.
-  const referenceFor = (tag) => {
-    const name = tag.includes("-") ? "span" : tag
-    if (!references.has(name)) {
-      references.set(name, shadow.appendChild(document.createElement(name)))
-    }
-    return references.get(name)
-  }
+  const reference = shadow.appendChild(document.createElement("div"))
   const followsColor = (() => {
     const sample = shadow.appendChild(document.createElement("div"))
     sample.style.cssText = "all: initial; color: rgb(1, 2, 3)"
@@ -146,6 +143,26 @@ const readFrame = ({
     }
     return before.width !== after.width || before.height !== after.height
   }
+  const insets = ["top", "right", "bottom", "left"]
+  // Paper draws every layer as a box, where unicode-bidi normal and isolate
+  // are the same.
+  const harmlessValues = new Map([
+    ["rotate", /(^| )0deg$/],
+    ["scale", /^1$/],
+    ["translate", /^0(px|%)$/],
+    ["transform", /^matrix\(1, 0, 0, 1, 0, 0\)$/],
+    ["background-position", /^0(px|%) 0(px|%)$/],
+    ["unicode-bidi", /^normal$/],
+  ])
+  // A control or an image clips and wraps only its own content, which is
+  // recorded. Chromium stops drawing a control natively once its border or
+  // background is styled.
+  const tagDefaults = {
+    input: ["appearance", "overflow-x", "overflow-y"],
+    textarea: ["appearance", "overflow-x", "overflow-y", "overflow-wrap"],
+    button: ["appearance"],
+    img: ["overflow-x", "overflow-y", "overflow-clip-margin"],
+  }
   const dropped = (node, references, isEmitted = () => false) => {
     const style = getComputedStyle(node)
     for (const reference of references) {
@@ -154,10 +171,17 @@ const readFrame = ({
     const referenceStyles = references.map((reference) =>
       getComputedStyle(reference)
     )
+    const ownDefaults = tagDefaults[node.localName] ?? []
     return compared.flatMap((property) => {
-      const value = style.getPropertyValue(property)
+      // getComputedStyle resolves an auto inset of a positioned element to
+      // the length it lands at, which moves nothing.
+      const value = insets.includes(property)
+        ? String(node.computedStyleMap().get(property))
+        : style.getPropertyValue(property)
       const isHarmless =
         isEmitted(property) ||
+        ownDefaults.includes(property) ||
+        harmlessValues.get(property)?.test(value) ||
         referenceStyles.some(
           (reference) => reference.getPropertyValue(property) === value
         ) ||
@@ -175,10 +199,9 @@ const readFrame = ({
   const isEmittedBy = (hasText) => (property) =>
     emitted.has(property) && (hasText || property !== "text-decoration-line")
   const recordDropped = (node, path, hasText) => {
-    const references = ["div", node.localName].map(referenceFor)
     for (const [property, value] of dropped(
       node,
-      references,
+      [reference],
       isEmittedBy(hasText)
     )) {
       record(path, property, value)
@@ -280,7 +303,7 @@ const readFrame = ({
     if (hasText && hasElements) {
       record(path, "children", "text and elements")
     }
-    if (hasElements && !/^(inline-)?flex$/.test(display)) {
+    if (hasElements && !/^(block|(inline-)?flex)$/.test(display)) {
       record(path, "display", display)
     }
     enter(contextElement)
@@ -425,6 +448,25 @@ const readFrame = ({
     return { value: joinParts(parts), tokens: found, unbound }
   }
 
+  const usedLineHeight = (element) => {
+    const style = getComputedStyle(element)
+    const line = frame.appendChild(document.createElement("div"))
+    line.style.cssText = "position: absolute; line-height: normal"
+    for (const property of [
+      "font-family",
+      "font-size",
+      "font-style",
+      "font-weight",
+      "font-stretch",
+    ]) {
+      line.style.setProperty(property, style.getPropertyValue(property))
+    }
+    line.textContent = "x"
+    const { height } = line.getBoundingClientRect()
+    line.remove()
+    return `${round(height)}px`
+  }
+
   const colorPattern = new RegExp(colorSource, "g")
   const colors = {}
   elements.forEach((entry, index) => {
@@ -436,6 +478,10 @@ const readFrame = ({
       )
       if (!decided) {
         continue
+      }
+      // Paper's own normal line height differs from Chromium's at some sizes.
+      if (property === "line-height" && decided.value === "normal") {
+        decided.value = usedLineHeight(entry.element)
       }
       entry.styles[property] = decided
       for (const [color] of decided.value.matchAll(colorPattern)) {

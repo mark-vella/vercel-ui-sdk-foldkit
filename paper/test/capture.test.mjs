@@ -194,11 +194,23 @@ describe("text-only flex elements", () => {
     )
     assert.equal(
       elementTag(result, "label"),
-      `<div layer-name="label" style="display: flex; font-family: Geist">`
+      `<div layer-name="label" style="display: flex; font-family: Geist; line-height: 21px">`
     )
     assert.deepEqual(
       result.bindings.filter(({ layer }) => layer === layerPath("label")),
       []
+    )
+  })
+})
+
+describe("line-height: normal", () => {
+  test("is emitted as the length Chromium lays the text out with", async () => {
+    const result = await capture(
+      `<div data-slot="x" style="line-height: normal">Text</div>`
+    )
+    assert.equal(
+      elementTag(result, "x"),
+      `<div layer-name="x" style="font-family: Geist; line-height: 21px">`
     )
   })
 })
@@ -213,7 +225,12 @@ describe("what the flattener does not emit", () => {
     [
       "position",
       `style="display: flex; position: relative; top: 5px"`,
-      ["bottom", "left", "position", "right", "top"],
+      ["position", "top"],
+    ],
+    [
+      "position without an offset or a turn",
+      `style="display: flex; position: relative; rotate: 0deg"`,
+      ["position"],
     ],
     [
       "a transform",
@@ -332,6 +349,11 @@ describe("what the flattener does not emit", () => {
       `<div data-slot="x" style="flex: 1">Grow</div>`,
       ["flex-basis"],
     ],
+    [
+      "a background position",
+      `<div data-slot="x" style="width: 20px; height: 20px; background-position: right 10px center"></div>`,
+      ["background-position"],
+    ],
   ]
   for (const [label, html, expected] of paints) {
     test(`records ${label}`, async () => {
@@ -350,6 +372,18 @@ describe("what the flattener does not emit", () => {
         property: "stroke",
         value: "rgb(214, 0, 32)",
       },
+    ])
+  })
+
+  test("records the margins a heading and a paragraph have and a div does not", async () => {
+    const result = await capture(
+      `<h4 data-slot="h">Title</h4><p data-slot="p">Text</p>`
+    )
+    assert.deepEqual(result.unsupported, [
+      { layer: layerPath("h"), property: "margin-bottom", value: "21.28px" },
+      { layer: layerPath("h"), property: "margin-top", value: "21.28px" },
+      { layer: layerPath("p"), property: "margin-bottom", value: "16px" },
+      { layer: layerPath("p"), property: "margin-top", value: "16px" },
     ])
   })
 

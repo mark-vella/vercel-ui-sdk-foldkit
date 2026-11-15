@@ -227,10 +227,12 @@ const verifyFrame = async (paper, fileId, context) => {
   if (frames.length === 0) {
     return [`no frame named ${sidecar.name} in ${component}`]
   }
-  const differences = []
   if (frames.length > 1) {
-    differences.push(`${frames.length} frames are named ${sidecar.name}`)
+    return [
+      `${frames.length} frames are named ${sidecar.name}. Sync never deletes, so remove the copies in Paper.`,
+    ]
   }
+  const differences = []
   const { jsx, tree, fingerprint } = await readPaperFrame(
     paper,
     fileId,
@@ -280,4 +282,4 @@ const verifyComponents = async (paper, fileId, names) => {
   return differences.length === 0
 }
 
-export { syncComponents, verifyComponents }
+export { syncComponents, verifyComponents, verifyFrame }

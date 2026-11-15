@@ -206,6 +206,9 @@ const compareFrames = (sidecar, rendered) => {
   )) {
     differences.push(`${key} in ${side}, not in ${otherSide(side)}`)
   }
+  for (const { layer, property, value } of sidecar.unsupported) {
+    differences.push(`${layer}: ${property} ${value} is not imported`)
+  }
   return differences
 }
 

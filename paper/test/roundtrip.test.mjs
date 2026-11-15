@@ -74,6 +74,22 @@ describe("a faithful export", () => {
   })
 })
 
+describe("a capture that recorded a drop", () => {
+  test("fails a faithful export, naming the layer and the drop", async () => {
+    const sidecar = JSON.parse(await readFixture("button-basic.json"))
+    sidecar.unsupported = [
+      {
+        layer: "button/basic > preview > button",
+        property: "direction",
+        value: "rtl",
+      },
+    ]
+    assert.deepEqual(await check(sidecar, await readExport("button/basic")), [
+      "button/basic > preview > button: direction rtl is not imported",
+    ])
+  })
+})
+
 describe("an export edited away from the capture", () => {
   const button = "button/basic > preview > button"
   const edits = [

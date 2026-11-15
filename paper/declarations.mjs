@@ -14,7 +14,6 @@ const paperDefaults = {
   "font-size": "16px",
   "font-weight": "400",
   "font-style": "normal",
-  "line-height": "normal",
   "letter-spacing": "normal",
   "text-align": "start",
   "text-transform": "none",
