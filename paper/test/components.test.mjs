@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { syncFrames, verifyFrame } from "../components.mjs"
+import { syncFrames, verifyFrame, verifyFrames } from "../components.mjs"
 
 const writeTools = new Set([
   "create_artboard",
@@ -177,4 +177,31 @@ test("rewrites a frame synced before Paper had its tokens, then stays", async ()
       '<div layer-name="button/basic" style="color: var(--ink)"></div>',
     ]
   )
+})
+
+test("prints each lost token link as a note, apart from the differences", async () => {
+  const paper = fakePaper({ tokens: ["--ink"] })
+  const sidecar = {
+    name: "button/basic",
+    unbound: [
+      { layer: "button/basic", property: "padding", value: "0px 13px" },
+    ],
+  }
+  const lines = []
+  const { log } = console
+  console.log = (line) => lines.push(line)
+  try {
+    await verifyFrames(paper, "file", {
+      label: "components",
+      page: "02 Components",
+      captures: [{ sidecar }],
+    })
+  } finally {
+    console.log = log
+  }
+  assert.deepEqual(lines, [
+    "button/basic: no artboard named button",
+    "button/basic: note, button/basic: padding 0px 13px is bound to no token",
+    "components: 1 checked, 1 differences, 1 unbound",
+  ])
 })

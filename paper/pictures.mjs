@@ -95,4 +95,20 @@ const innermostLayer = (region, boxes) => {
     .layer
 }
 
-export { comparePictures, innermostLayer, readLayerBoxes }
+const resizedLayers = (expected, actual) =>
+  expected.flatMap(({ layer, width, height }, index) => {
+    const emitted = actual[index]
+    if (emitted?.width === width && emitted?.height === height) {
+      return []
+    }
+    const size = emitted ? `${emitted.width}x${emitted.height}` : "missing"
+    return [
+      {
+        layer,
+        property: "size",
+        value: `${size} in the emitted HTML, ${width}x${height} in the example`,
+      },
+    ]
+  })
+
+export { comparePictures, innermostLayer, readLayerBoxes, resizedLayers }

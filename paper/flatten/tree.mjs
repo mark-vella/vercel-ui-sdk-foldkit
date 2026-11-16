@@ -4,9 +4,13 @@ const readTree = ({
   markerOf,
   enter,
   readSvg,
+  readControl,
+  readPseudos,
   recordDropped,
   recordAbsolute,
+  recordDisplay,
   recordInlineBoxes,
+  recordTextGrid,
 }) => {
   const elements = []
   const visit = (node, parent) => {
@@ -34,27 +38,51 @@ const readTree = ({
     const path = parent ? `${parent.path} > ${name ?? node.localName}` : name
     const kind =
       node === frame ? "frame" : node.dataset.paperLayer ? "chrome" : "slot"
-    const entry = { element: node, parent, name, kind, path }
-    const children = [...node.childNodes].flatMap((child) =>
-      visit(child, entry)
-    )
+    const control = readControl(node, path)
+    const entry = {
+      element: node,
+      parent,
+      name,
+      kind,
+      path,
+      textPseudo: control?.textPseudo,
+      layout: control?.layout,
+    }
+    const [before, after] = readPseudos(node, entry)
+    const pseudos = [before, after].filter(Boolean)
+    const children = [
+      before,
+      ...(control?.children ??
+        [...node.childNodes].flatMap((child) => visit(child, entry))),
+      after,
+    ].filter(Boolean)
     if (children.length === 1 && "text" in children[0]) {
       children[0].text = children[0].text.trim()
     }
     const hasText = children.some((child) => "text" in child)
     const hasElements = children.some((child) => !("text" in child))
-    if (hasText && hasElements) {
-      record(path, "children", "text and elements")
-    }
     const isBlockFlow =
       display === "block" || (display === "list-item" && !markerOf(style))
-    const hasSupportedLayout =
-      isBlockFlow || /^(inline-)?(flex|grid)$/.test(display)
-    if (hasElements && !hasSupportedLayout) {
-      record(path, "display", display)
+    const isFlexOrGrid = /^(inline-)?(flex|grid)$/.test(display)
+    const isOwnBlock = (child) =>
+      "text" in child ||
+      ("element" in child &&
+        !getComputedStyle(child.element, child.pseudo).display.startsWith(
+          "inline"
+        ))
+    const holdsTextApart =
+      style.whiteSpaceCollapse === "collapse" &&
+      (isFlexOrGrid || (isBlockFlow && hasText && children.every(isOwnBlock)))
+    if (hasText && hasElements && !holdsTextApart) {
+      record(path, "children", "text and elements")
     }
-    if (isBlockFlow) {
-      recordInlineBoxes(node, children)
+    const hasSupportedLayout = isBlockFlow || isFlexOrGrid
+    if (hasElements && !hasSupportedLayout) {
+      recordDisplay({ ...entry, children }, display, contextElement)
+    }
+    recordInlineBoxes({ ...entry, children }, contextElement)
+    if (hasText && !hasElements && /grid$/.test(display)) {
+      recordTextGrid(entry)
     }
     enter(contextElement)
     recordDropped(node, path, hasText)
@@ -62,7 +90,7 @@ const readTree = ({
       recordAbsolute(node, path, children, contextElement)
     }
     Object.assign(entry, { hasText, children })
-    elements.push(entry)
+    elements.push(entry, ...pseudos)
     return [entry]
   }
   const [tree] = visit(frame, null)

@@ -316,11 +316,17 @@ const verifyFrames = async (paper, fileId, context) => {
     })
     differences.push(...found.map((text) => `${sidecar.name}: ${text}`))
   }
-  for (const difference of differences) {
-    console.log(difference)
+  const notes = captures.flatMap(({ sidecar }) =>
+    sidecar.unbound.map(
+      ({ layer, property, value }) =>
+        `${sidecar.name}: note, ${layer}: ${property} ${value} is bound to no token`
+    )
+  )
+  for (const line of [...differences, ...notes]) {
+    console.log(line)
   }
   console.log(
-    `${label}: ${captures.length} checked, ${differences.length} differences`
+    `${label}: ${captures.length} checked, ${differences.length} differences, ${notes.length} unbound`
   )
   return differences.length === 0
 }

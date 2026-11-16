@@ -5,7 +5,10 @@ import {
   toPaperOrder,
 } from "./declarations.mjs"
 import { createBindings } from "./flatten/bindings.mjs"
+import { createCalcBinder } from "./flatten/calc.mjs"
+import { createControlText, createPseudoReader } from "./flatten/children.mjs"
 import { createComparison } from "./flatten/compare.mjs"
+import { createLayout } from "./flatten/layout.mjs"
 import { createRecords } from "./flatten/records.mjs"
 import { createSvgReader } from "./flatten/svg.mjs"
 import { readTree } from "./flatten/tree.mjs"
@@ -113,51 +116,74 @@ const readFrame = (
     tagDefaults,
     sizeConstraints,
   })
-  const { recordDropped, recordAbsolute, recordInlineBoxes } =
-    helpers.createRecords({
-      record,
-      emitted,
-      insets,
-      movesOrTurnsSource,
-      backgroundLonghands,
-      isHeldBackground: helpers.isHeldBackground,
-      rewrittenGradientSpaces: helpers.rewrittenGradientSpaces,
-      markerOf: helpers.markerOf,
-      replacedElements,
-      widgets,
-      widgetInputs,
-      comparison,
-    })
-  const readSvg = helpers.createSvgReader({ comparison, record, round })
+  const svgs = helpers.createSvgReader({ comparison, record, round })
+  const layout = helpers.createLayout({ comparison })
+  const {
+    recordDropped,
+    recordAbsolute,
+    recordDisplay,
+    recordInlineBoxes,
+    recordTextGrid,
+    paintsNothing,
+  } = helpers.createRecords({
+    record,
+    isAtRest: layout.isAtRest,
+    emitted,
+    insets,
+    movesOrTurnsSource,
+    backgroundLonghands,
+    isHeldBackground: helpers.isHeldBackground,
+    rewrittenGradientSpaces: helpers.rewrittenGradientSpaces,
+    markerOf: helpers.markerOf,
+    replacedElements,
+    widgets,
+    widgetInputs,
+    comparison,
+    keepLayer: svgs.keepLayer,
+  })
+  const readControl = helpers.createControlText({ frame, record, widgetInputs })
+  const readPseudos = helpers.createPseudoReader({ record, paintsNothing })
   const { tree, elements } = helpers.readTree({
     frame,
     record,
     markerOf: helpers.markerOf,
     enter: comparison.enter,
-    readSvg,
+    readSvg: svgs.read,
+    readControl,
+    readPseudos,
     recordDropped,
     recordAbsolute,
+    recordDisplay,
     recordInlineBoxes,
+    recordTextGrid,
   })
 
   const real = bindings.read(elements)
-  const rects = elements.map(({ element }) => element.getBoundingClientRect())
+  const rects = elements.map(layout.rectOf)
   const marked = bindings.readMarked(elements, record)
+  svgs.bind(bindings)
 
   const { usedLineHeight, pinStaticPosition, pinUsedSize } =
     helpers.createUsedValues({ frame, round })
+  const calc = helpers.createCalcBinder({ frame, tokens, computedProperties })
   const colorPattern = new RegExp(colorSource, "g")
   const colors = {}
   elements.forEach((entry, index) => {
     entry.styles = {}
     for (const property of Object.keys(real[index])) {
-      const decided = bindings.decide(
-        real[index][property],
-        marked.map((values) => values[index][property])
+      const decided = calc.bind(
+        entry.element,
+        property,
+        bindings.decide(
+          real[index][property],
+          marked.map((values) => values[index][property])
+        )
       )
       // Paper's own normal line height differs from Chromium's at some sizes.
-      if (property === "line-height" && decided.value === "normal") {
-        decided.value = usedLineHeight(entry.element)
+      // Chromium floors a unitless line height to 1/64 px, and rounds a length.
+      if (property === "line-height" && decided.tokens.length === 0) {
+        decided.value =
+          usedLineHeight(entry.element, decided.value) ?? decided.value
       }
       entry.styles[property] = decided
       for (const [color] of decided.value.matchAll(colorPattern)) {
@@ -167,7 +193,12 @@ const readFrame = (
         )
       }
     }
+    for (const [property, value] of Object.entries(entry.layout ?? {})) {
+      entry.styles[property] = { value, tokens: [] }
+    }
     const parent = entry.parent?.element ?? frame.parentElement
+    layout.dropInheritedDirection(entry, parent)
+    layout.pinScroll(entry)
     const isZIndexIgnored =
       entry.styles.position.value === "static" &&
       !/flex|grid/.test(getComputedStyle(parent).display)
@@ -193,7 +224,11 @@ const pageFunctions = {
   isHeldBackground,
   rewrittenGradientSpaces,
   createBindings,
+  createCalcBinder,
   createComparison,
+  createControlText,
+  createPseudoReader,
+  createLayout,
   createRecords,
   createSvgReader,
   readTree,
@@ -256,7 +291,10 @@ const flattenFrame = async (page, tokens) => {
       return escapeText(node.text)
     }
     if ("svg" in node) {
-      layers.push({ layer: node.path, kind: "svg", ...node.size })
+      const layer = node.path
+      layers.push({ layer, kind: "svg", ...node.size })
+      bindings.push(...node.tokens.map((bound) => ({ layer, ...bound })))
+      unbound.push(...node.unbound.map((entry) => ({ layer, ...entry })))
       return node.svg
     }
     if (node.name) {

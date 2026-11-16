@@ -40,20 +40,23 @@ const createBindings = ({
       new Map(sentinels.map(({ name, serialized }) => [serialized, name]))
   )
   const read = (elements) =>
-    elements.map(({ element, hasText }) => {
-      const style = getComputedStyle(element)
-      const properties = hasText
-        ? [...boxProperties, ...textProperties]
-        : boxProperties
+    elements.map(({ element, pseudo, hasText, textPseudo }) => {
+      const style = getComputedStyle(element, pseudo)
       const computed = element.computedStyleMap()
-      return Object.fromEntries(
-        properties.map((property) => [
-          property,
-          computedProperties.includes(property)
-            ? String(computed.get(property))
-            : style.getPropertyValue(property),
-        ])
-      )
+      const box = boxProperties.map((property) => [
+        property,
+        computedProperties.includes(property) && !pseudo
+          ? String(computed.get(property))
+          : style.getPropertyValue(property),
+      ])
+      const textStyle = getComputedStyle(element, textPseudo ?? pseudo)
+      const text = hasText
+        ? textProperties.map((property) => [
+            property,
+            textStyle.getPropertyValue(property),
+          ])
+        : []
+      return Object.fromEntries([...box, ...text])
     })
   const tokenValues = (element) => {
     const style = getComputedStyle(element)

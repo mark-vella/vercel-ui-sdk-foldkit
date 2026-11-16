@@ -1,5 +1,6 @@
 const createRecords = ({
   record,
+  isAtRest,
   emitted,
   insets,
   movesOrTurnsSource,
@@ -11,6 +12,7 @@ const createRecords = ({
   widgets,
   widgetInputs,
   comparison,
+  keepLayer,
 }) => {
   const movesOrTurns = new RegExp(movesOrTurnsSource)
   const emittedDisplay = (display) => {
@@ -41,7 +43,7 @@ const createRecords = ({
       return style.position !== "fixed"
     }
     if (property === "overflow-x" || property === "overflow-y") {
-      return !scrolls(node, property)
+      return !scrolls(node, property) || isAtRest(node)
     }
     if (property === "transform") {
       return movesOrTurns.test(node.computedStyleMap().get(property))
@@ -57,12 +59,6 @@ const createRecords = ({
       isEmittedBy(hasText)
     )) {
       record(path, property, value)
-    }
-    for (const pseudo of ["::before", "::after"]) {
-      const { content } = getComputedStyle(node, pseudo)
-      if (content !== "none" && content !== "normal") {
-        record(path, pseudo, content)
-      }
     }
     const style = getComputedStyle(node)
     const rewrittenSpaces = rewrittenGradientSpaces(style)
@@ -109,12 +105,6 @@ const createRecords = ({
     if (isBlocked) {
       record(path, "blocked request", node.currentSrc)
     }
-    const value = node.value || node.placeholder
-    const showsValue =
-      ["input", "textarea", "select"].includes(node.localName) && !isWidgetInput
-    if (showsValue && value) {
-      record(path, "value", value)
-    }
   }
   const paintsNothing = (style) =>
     style.backgroundColor === "rgba(0, 0, 0, 0)" &&
@@ -135,29 +125,118 @@ const createRecords = ({
         offsetParent?.dataset.slot ?? offsetParent?.localName ?? "viewport"
       )
     }
-    if (children.length === 0 && paintsNothing(getComputedStyle(node))) {
-      record(path, "empty layer", "absolute")
+    const style = getComputedStyle(node)
+    // Paper deletes an absolute layer at no opacity, whatever it holds.
+    if (style.opacity === "0") {
+      record(path, "empty layer", "opacity 0")
+    } else if (children.length === 0 && paintsNothing(style)) {
+      children.push(keepLayer(path))
     }
   }
-  const recordInlineBoxes = (node, children) => {
-    const boxes = children.filter((child) => "element" in child)
-    const measured = [node, ...boxes.map(({ element }) => element)]
-    for (const { element, path } of boxes) {
-      const { display } = getComputedStyle(element)
-      const isLaidOutApart =
-        display.startsWith("inline") &&
-        comparison.bindsSize(
-          element,
-          "display",
-          emittedDisplay(display),
-          measured
-        )
-      if (isLaidOutApart) {
-        record(path, "display", `${display} in a block`)
+  const sizesOf = (elements) =>
+    elements
+      .map((element) => {
+        const { width, height } = element.getBoundingClientRect()
+        return `${width}x${height}`
+      })
+      .join()
+  const elementsOf = (children) =>
+    children.filter((child) => "element" in child).map(({ element }) => element)
+  const isSeen = ({ element, name }) =>
+    name !== null || !paintsNothing(getComputedStyle(element))
+  const laysOutApart = (entry, display, measured) =>
+    comparison.bindsSize(entry.element, "display", emittedDisplay(display), [
+      ...measured,
+      ...(isSeen(entry) ? [entry.element] : []),
+      ...elementsOf(entry.children),
+    ])
+  const recordDisplay = (entry, display, parent) => {
+    if (
+      !display.startsWith("inline") ||
+      laysOutApart(entry, display, [parent])
+    ) {
+      record(entry.path, "display", display)
+    }
+  }
+  const recordInlineBoxes = (entry, parent) => {
+    const boxes = entry.children.filter((child) => "element" in child)
+    const container = [parent, entry.element]
+    const recordBoxes = () => {
+      for (const box of boxes) {
+        const { display } = getComputedStyle(box.element)
+        const others = elementsOf(boxes.filter((other) => other !== box))
+        if (
+          !display.startsWith("inline") ||
+          !laysOutApart(box, display, [...container, ...others])
+        ) {
+          continue
+        }
+        const fit = `display: ${emittedDisplay(display)}; width: fit-content`
+        const measured = [...container, ...others, ...elementsOf(box.children)]
+        const isFitted =
+          sizesOf(measured) ===
+          comparison.withStyle(box.element, fit, () => sizesOf(measured))
+        if (isFitted) {
+          box.fit = fit
+        } else {
+          record(box.path, "display", `${display} in a block`)
+        }
       }
     }
+    if (emittedDisplay(getComputedStyle(entry.element).display) === "block") {
+      comparison.withStyle(entry.element, "display: block", recordBoxes)
+    }
   }
-  return { recordDropped, recordAbsolute, recordInlineBoxes }
+  const flexAlignments = ["normal", "stretch", "center", "start", "end"]
+  const textBoxes = (element) => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    return [...range.getClientRects(), element.getBoundingClientRect()]
+      .map(({ x, y, width, height }) => `${x},${y} ${width}x${height}`)
+      .join()
+  }
+  // Paper drops display: grid from a node that holds only text.
+  const recordTextGrid = (entry) => {
+    const { display, justifyItems, alignItems } = getComputedStyle(
+      entry.element
+    )
+    const flex = {
+      display: display.replace("grid", "flex"),
+      "justify-content": justifyItems,
+      "align-items": alignItems,
+    }
+    const block = { display: display.replace("grid", "block") }
+    const isFlexAligned =
+      flexAlignments.includes(justifyItems) &&
+      flexAlignments.includes(alignItems)
+    const before = textBoxes(entry.element)
+    const layout = [...(isFlexAligned ? [flex] : []), block].find(
+      (candidate) => {
+        const declaration = Object.entries(candidate)
+          .map(([property, value]) => `${property}: ${value}`)
+          .join(" !important; ")
+        return (
+          before ===
+          comparison.withStyle(entry.element, declaration, () =>
+            textBoxes(entry.element)
+          )
+        )
+      }
+    )
+    if (layout) {
+      entry.layout = layout
+    } else {
+      record(entry.path, "display", `${display} with only text`)
+    }
+  }
+  return {
+    recordDropped,
+    recordAbsolute,
+    recordDisplay,
+    recordInlineBoxes,
+    recordTextGrid,
+    paintsNothing,
+  }
 }
 
 export { createRecords }

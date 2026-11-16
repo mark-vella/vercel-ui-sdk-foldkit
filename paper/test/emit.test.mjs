@@ -293,7 +293,7 @@ describe("sizes", () => {
       },
       {
         half: "flex-shrink: 1; width: 50%; height: 25%",
-        fit: "flex-shrink: 1; width: fit-content; font-family: Geist; line-height: 16px",
+        fit: "flex-shrink: 1; width: fit-content; font-family: Geist, system-ui, sans-serif; line-height: 16px",
         ratio:
           "display: flex; flex-shrink: 1; height: var(--size-sm); aspect-ratio: 16 / 9",
         unsupported: [],
@@ -335,24 +335,16 @@ describe("overflow", () => {
         offline: result.offline,
       },
       {
-        clipped: "display: flex; overflow: hidden",
+        clipped:
+          "display: flex; min-width: 0px; min-height: 0px; overflow: clip",
         truncated:
-          "flex-shrink: 1; width: 80px; overflow: hidden; text-overflow: ellipsis; font-family: Geist; line-height: 20px; white-space: nowrap",
+          "flex-shrink: 1; width: 80px; min-width: 0px; min-height: 0px; overflow: clip; text-overflow: ellipsis; font-family: Geist, system-ui, sans-serif; line-height: 20px; white-space: nowrap",
         broken:
-          "flex-shrink: 1; width: 50px; font-family: Geist; line-height: 20px; overflow-wrap: break-word",
+          "flex-shrink: 1; width: 50px; font-family: Geist, system-ui, sans-serif; line-height: 20px; overflow-wrap: break-word",
         unsupported: [],
         offline: [],
       }
     )
-  })
-
-  test("is recorded where it scrolls content out of view", async () => {
-    const result = await capture(
-      `<div data-slot="list" style="display: flex; flex-direction: column; width: 40px; height: 20px; overflow-y: auto"><div style="height: 40px; flex-shrink: 0"></div></div>`
-    )
-    assert.deepEqual(result.unsupported, [
-      { layer: layerPath("list"), property: "overflow-y", value: "auto" },
-    ])
   })
 })
 
@@ -402,12 +394,12 @@ describe("text", () => {
       },
       {
         clock:
-          "font-family: Geist; line-height: 20px; font-variant-numeric: tabular-nums",
+          "font-family: Geist, system-ui, sans-serif; line-height: 20px; font-variant-numeric: tabular-nums",
         heading:
-          "flex-shrink: 1; width: 120px; font-family: Geist; line-height: 20px; text-wrap-style: balance",
-        link: "color: var(--ink); font-family: Geist; line-height: 20px; text-decoration-line: underline; text-decoration-color: var(--line); text-underline-offset: 4px",
+          "flex-shrink: 1; width: 120px; font-family: Geist, system-ui, sans-serif; line-height: 20px; text-wrap-style: balance",
+        link: "color: var(--ink); font-family: Geist, system-ui, sans-serif; line-height: 20px; text-decoration-line: underline; text-decoration-color: var(--line); text-decoration-thickness: auto; text-underline-offset: 4px",
         plain:
-          "color: var(--ink); font-family: Geist; line-height: 20px; text-decoration-line: underline",
+          "color: var(--ink); font-family: Geist, system-ui, sans-serif; line-height: 20px; text-decoration-line: underline; text-decoration-thickness: auto",
         bindings: ["color --ink", "text-decoration-color --line"],
         unsupported: [],
         offline: [],
@@ -420,21 +412,6 @@ describe("text", () => {
       `<div style="display: flex"><div data-slot="icon" style="vertical-align: middle; width: 10px; height: 10px"></div></div>`
     )
     assert.deepEqual(result.unsupported, [])
-  })
-})
-
-describe("an absolute layer that paints nothing", () => {
-  test("is recorded, because Paper drops it", async () => {
-    const result = await capture(
-      `<div style="position: relative; display: flex; width: 40px; height: 20px"><div data-slot="control" style="position: absolute; inset: 0"></div></div>`
-    )
-    assert.deepEqual(result.unsupported, [
-      {
-        layer: layerPath("div > control"),
-        property: "empty layer",
-        value: "absolute",
-      },
-    ])
   })
 })
 

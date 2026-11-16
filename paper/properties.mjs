@@ -63,6 +63,7 @@ const boxProperties = [
   "backdrop-filter",
   "isolation",
   "visibility",
+  "direction",
 ]
 const computedProperties = [
   "width",
@@ -87,6 +88,7 @@ const textProperties = [
   "text-transform",
   "text-decoration-line",
   "text-decoration-color",
+  "text-decoration-thickness",
   "text-underline-offset",
   "font-variant-numeric",
   "text-wrap-style",

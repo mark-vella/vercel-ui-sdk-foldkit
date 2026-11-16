@@ -1,8 +1,13 @@
 const createUsedValues = ({ frame, round }) => {
-  const usedLineHeight = (element) => {
+  const usedLineHeight = (element, value) => {
+    const lineHeight =
+      value === "normal" ? value : element.computedStyleMap().get("line-height")
+    if (String(lineHeight) !== "normal" && lineHeight.unit !== "number") {
+      return null
+    }
     const style = getComputedStyle(element)
     const line = frame.appendChild(document.createElement("div"))
-    line.style.cssText = "position: absolute; line-height: normal"
+    line.style.cssText = `position: absolute; line-height: ${lineHeight}`
     for (const property of [
       "font-family",
       "font-size",

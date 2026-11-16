@@ -238,6 +238,7 @@ const createComparison = ({
   }
   return {
     enter,
+    withStyle,
     bindsSize,
     resizesAsDiv,
     dropped,

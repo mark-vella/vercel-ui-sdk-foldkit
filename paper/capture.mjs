@@ -7,7 +7,12 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
 import { flattenFrame } from "./flatten.mjs"
-import { comparePictures, innermostLayer, readLayerBoxes } from "./pictures.mjs"
+import {
+  comparePictures,
+  innermostLayer,
+  readLayerBoxes,
+  resizedLayers,
+} from "./pictures.mjs"
 import { readCodeTokens } from "./tokens.mjs"
 
 const usage = "Usage: node paper/capture.mjs <component/example>..."
@@ -289,6 +294,7 @@ const captureCompared = async (browser, options) => {
     tokens: options.tokens,
     inspect: (page) => page.evaluate(readLayerBoxes),
   })
+  flat.unsupported.push(...resizedLayers(flat.layers, emitted.layers))
   const region = await comparePictures(browser, {
     expected: flat.png,
     actual: emitted.png,

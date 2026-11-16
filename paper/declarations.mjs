@@ -134,7 +134,11 @@ const compressSides = (values) => {
   return values
 }
 
-const toDeclarations = ({ styles, hasText, children }) => {
+// Paper keeps only the first family and falls back to system-ui after it.
+const paperFontFamily = ({ value, tokens }) =>
+  tokens.length > 0 ? value : `${value.split(",")[0]}, system-ui, sans-serif`
+
+const toDeclarations = ({ kind, styles, hasText, children, fit }) => {
   const declarations = []
   const add = (property, parts, value) => {
     declarations.push({
@@ -196,6 +200,9 @@ const toDeclarations = ({ styles, hasText, children }) => {
     "aspect-ratio",
   ]) {
     addKept(property)
+  }
+  if (fit) {
+    add("width", [], "fit-content")
   }
 
   if (keep("position") && styles.position.value !== "fixed") {
@@ -286,6 +293,11 @@ const toDeclarations = ({ styles, hasText, children }) => {
       add("outline-offset", [styles["outline-offset"]])
     }
   }
+  addKept("direction")
+  // Paper never synthesizes bold or italic in a frame it imports.
+  if (kind === "frame") {
+    add("font-synthesis", [], "none")
+  }
   if (hasText) {
     const isDecorationColorImplied =
       styles["text-decoration-line"].value === "none" ||
@@ -293,7 +305,17 @@ const toDeclarations = ({ styles, hasText, children }) => {
         styles["text-decoration-color"].tokens.join() ===
           styles.color.tokens.join())
     for (const property of textProperties) {
-      if (property !== "text-decoration-color" || !isDecorationColorImplied) {
+      if (property === "font-family") {
+        add(property, [styles[property]], paperFontFamily(styles[property]))
+      } else if (property === "text-decoration-thickness") {
+        // Paper stores an underline with no thickness as 1px thick.
+        if (styles["text-decoration-line"].value !== "none") {
+          add(property, [styles[property]])
+        }
+      } else if (
+        property !== "text-decoration-color" ||
+        !isDecorationColorImplied
+      ) {
         addKept(property)
       }
     }
