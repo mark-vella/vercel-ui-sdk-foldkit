@@ -56,7 +56,7 @@ test("tells a closed popup from another hidden part", async () => {
   const outFolder = await mkdtemp(path.join(tmpdir(), "paper-census-"))
   try {
     const results = await Array.fromAsync(
-      captureExamples(browser, ["dialog/basic", "tabs/basic"], {
+      captureExamples(browser, ["dialog/basic", "drawer/basic", "tabs/basic"], {
         outFolder,
         inspect: inspectExample,
       })
@@ -74,6 +74,13 @@ test("tells a closed popup from another hidden part", async () => {
           name: "dialog/basic",
           closedSlots: ["dialog-backdrop", "dialog-content"],
           closedPopups: ["dialog-content"],
+          popups: 1,
+          parts: 1,
+        },
+        {
+          name: "drawer/basic",
+          closedSlots: ["drawer-backdrop", "drawer-viewport"],
+          closedPopups: ["drawer-viewport"],
           popups: 1,
           parts: 1,
         },

@@ -455,6 +455,7 @@ const notes = [
   "- display <value> counts containers with element children. A table cell or grid that holds only text is not counted.",
   "- closed popup: a hidden slot that is or holds a ui-sdk popup's content. hidden part: any other hidden slot, such as a panel, an indicator or a backdrop.",
   "- a deferred finding's entries add up the elements of each kind it matches, so an svg under both svg kinds counts twice.",
+  "- the two svg kinds appear in the same frames, so each reads 0 in only recorded loss. The deferred svg row counts them together.",
   "",
   "not counted",
   "- layer positions, which nothing compares yet",

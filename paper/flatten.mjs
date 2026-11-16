@@ -1,25 +1,27 @@
-import { toDeclarations } from "./declarations.mjs"
 import {
+  isHeldBackground,
+  toDeclarations,
+  toPaperOrder,
+} from "./declarations.mjs"
+import {
+  backgroundLonghands,
   boxProperties,
+  computedProperties,
   emittedProperties,
+  harmlessValues,
   ignoredProperties,
   logicalPattern,
+  movesOrTurns,
+  replacedElements,
+  sides,
+  sizeConstraints,
+  tagDefaults,
   textProperties,
+  widgetInputs,
+  widgets,
 } from "./properties.mjs"
 import { toPaperColor } from "./tokens.mjs"
 
-const replacedElements = [
-  "img",
-  "picture",
-  "video",
-  "audio",
-  "canvas",
-  "iframe",
-  "embed",
-  "object",
-]
-const widgets = ["select", "progress", "meter"]
-const widgetInputs = ["checkbox", "radio", "range", "color", "file", "image"]
 const colorPattern =
   /\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^()]*\)/g
 const markerOf = ({ display, listStyleImage, listStyleType }) => {
@@ -35,6 +37,7 @@ const markerOf = ({ display, listStyleImage, listStyleType }) => {
 const readFrame = ({
   tokens,
   boxProperties,
+  computedProperties,
   textProperties,
   emittedProperties,
   ignoredProperties,
@@ -44,8 +47,19 @@ const readFrame = ({
   widgetInputs,
   colorSource,
   markerSource,
+  heldBackgroundSource,
+  sizeConstraints: constraints,
+  insets,
+  harmlessSources,
+  tagDefaults,
+  backgroundLonghands,
+  movesOrTurnsSource,
 }) => {
+  const harmlessValues = new Map(
+    harmlessSources.map(([property, source]) => [property, new RegExp(source)])
+  )
   const markerOf = new Function(`return ${markerSource}`)()
+  const isHeldBackground = new Function(`return ${heldBackgroundSource}`)()
   const frame = document.querySelector("[data-example]")
   const probe = document.head.appendChild(document.createElement("div"))
   const longhands = (property) => {
@@ -53,7 +67,9 @@ const readFrame = ({
     probe.style.setProperty(property, "initial")
     return [...probe.style]
   }
-  const emitted = new Set(emittedProperties.flatMap(longhands))
+  const emitted = new Set(
+    emittedProperties.flatMap((property) => [property, ...longhands(property)])
+  )
   const ignored = new Set(ignoredProperties.flatMap(longhands))
   const logical = new RegExp(logicalSource)
   const listed = new Set(getComputedStyle(frame))
@@ -91,9 +107,15 @@ const readFrame = ({
       return { name: token.name, value, serialized: serialize(property, value) }
     })
   )
-  const withoutFontSizes = first.filter(
-    (_, index) => tokens[index].type !== "fontSize"
+  const resolver = frame.appendChild(document.createElement("div"))
+  const resolvedTokens = new Map(
+    tokens.map((token, index) => {
+      const [property] = sentinelFor(token, index, 1)
+      resolver.style.setProperty(property, `var(${token.name})`)
+      return [token.name, getComputedStyle(resolver).getPropertyValue(property)]
+    })
   )
+  resolver.remove()
   const [firstNames, secondNames] = [first, second].map(
     (sentinels) =>
       new Map(sentinels.map(({ name, serialized }) => [serialized, name]))
@@ -136,7 +158,6 @@ const readFrame = ({
       host.style.setProperty(property, isCurrentColor ? "currentcolor" : value)
     }
   }
-  const constraints = ["min-width", "min-height", "max-width", "max-height"]
   const bindsSize = (node, property, value) => {
     const before = node.getBoundingClientRect()
     const authored = node.getAttribute("style")
@@ -154,26 +175,6 @@ const readFrame = ({
     }
     return before.width !== after.width || before.height !== after.height
   }
-  const insets = ["top", "right", "bottom", "left"]
-  // Paper draws every layer as a box, where unicode-bidi normal and isolate
-  // are the same.
-  const harmlessValues = new Map([
-    ["rotate", /(^| )0deg$/],
-    ["scale", /^1$/],
-    ["translate", /^0(px|%)$/],
-    ["transform", /^matrix\(1, 0, 0, 1, 0, 0\)$/],
-    ["background-position", /^0(px|%) 0(px|%)$/],
-    ["unicode-bidi", /^normal$/],
-  ])
-  // A control or an image clips and wraps only its own content, which is
-  // recorded. Chromium stops drawing a control natively once its border or
-  // background is styled.
-  const tagDefaults = {
-    input: ["appearance", "overflow-x", "overflow-y"],
-    textarea: ["appearance", "overflow-x", "overflow-y", "overflow-wrap"],
-    button: ["appearance"],
-    img: ["overflow-x", "overflow-y", "overflow-clip-margin"],
-  }
   const dropped = (node, references, isEmitted = () => false) => {
     const style = getComputedStyle(node)
     for (const reference of references) {
@@ -190,8 +191,10 @@ const readFrame = ({
         ? String(node.computedStyleMap().get(property))
         : style.getPropertyValue(property)
       const isHarmless =
-        isEmitted(property) ||
+        isEmitted(property, style, node) ||
         ownDefaults.includes(property) ||
+        (property === "vertical-align" &&
+          !/^(inline|table-cell)/.test(style.display)) ||
         harmlessValues.get(property)?.test(value) ||
         referenceStyles.some(
           (reference) => reference.getPropertyValue(property) === value
@@ -205,10 +208,57 @@ const readFrame = ({
       return isHarmless ? [] : [[property, value]]
     })
   }
+  const hasContentBoxEdges = (style, property) => {
+    const edges = property.endsWith("width")
+      ? ["left", "right"]
+      : ["top", "bottom"]
+    return (
+      style.boxSizing === "content-box" &&
+      edges.some(
+        (side) =>
+          parseFloat(style.getPropertyValue(`padding-${side}`)) > 0 ||
+          parseFloat(style.getPropertyValue(`border-${side}-width`)) > 0
+      )
+    )
+  }
   // text-decoration-line does not inherit: it paints across the text inside,
   // which never carries it.
-  const isEmittedBy = (hasText) => (property) =>
-    emitted.has(property) && (hasText || property !== "text-decoration-line")
+  const movesOrTurns = new RegExp(movesOrTurnsSource)
+  const scrolls = (node, property) => {
+    const value = getComputedStyle(node).getPropertyValue(property)
+    const overflows =
+      property === "overflow-x"
+        ? node.scrollWidth > node.clientWidth
+        : node.scrollHeight > node.clientHeight
+    return value === "scroll" || (value === "auto" && overflows)
+  }
+  const isEmittedBy = (hasText) => (property, style, node) => {
+    if (!emitted.has(property)) {
+      return false
+    }
+    if (
+      property.startsWith("text-decoration-") ||
+      property === "text-underline-offset"
+    ) {
+      return hasText
+    }
+    if (constraints.includes(property)) {
+      return !hasContentBoxEdges(style, property)
+    }
+    if (property === "position" || insets.includes(property)) {
+      return style.position !== "fixed"
+    }
+    if (property === "overflow-x" || property === "overflow-y") {
+      return !scrolls(node, property)
+    }
+    if (property === "transform") {
+      return movesOrTurns.test(node.computedStyleMap().get(property))
+    }
+    if (backgroundLonghands.includes(property)) {
+      return isHeldBackground(style)
+    }
+    return true
+  }
   const recordDropped = (node, path, hasText) => {
     for (const [property, value] of dropped(
       node,
@@ -234,7 +284,12 @@ const readFrame = ({
       replacedElements.includes(node.localName) ||
       ((isWidgetInput || widgets.includes(node.localName)) &&
         style.appearance !== "none")
-    if (drawsItself) {
+    // A fieldset lays its first legend out apart from its other children, at
+    // the legend's own width.
+    const isRenderedLegend =
+      node.parentElement?.localName === "fieldset" &&
+      node === node.parentElement.querySelector(":scope > legend")
+    if (drawsItself || isRenderedLegend) {
       const element = isWidgetInput ? `input type=${node.type}` : node.localName
       record(path, "element", element)
     }
@@ -267,6 +322,30 @@ const readFrame = ({
     }
     if (svg.outerHTML.includes("currentColor")) {
       record(path, "color", getComputedStyle(svg).color)
+    }
+  }
+
+  const paintsNothing = (style) =>
+    style.backgroundColor === "rgba(0, 0, 0, 0)" &&
+    style.backgroundImage === "none" &&
+    style.boxShadow === "none" &&
+    style.outlineStyle === "none" &&
+    ["top", "right", "bottom", "left"].every(
+      (side) =>
+        style.getPropertyValue(`border-${side}-style`) === "none" ||
+        parseFloat(style.getPropertyValue(`border-${side}-width`)) === 0
+    )
+  const recordAbsolute = (node, path, children, contextElement) => {
+    const { offsetParent } = node
+    if (offsetParent !== contextElement) {
+      record(
+        path,
+        "containing block",
+        offsetParent?.dataset.slot ?? offsetParent?.localName ?? "viewport"
+      )
+    }
+    if (children.length === 0 && paintsNothing(getComputedStyle(node))) {
+      record(path, "empty layer", "absolute")
     }
   }
 
@@ -317,13 +396,16 @@ const readFrame = ({
       record(path, "children", "text and elements")
     }
     const hasSupportedLayout =
-      /^(block|(inline-)?flex)$/.test(display) ||
+      /^(block|(inline-)?(flex|grid))$/.test(display) ||
       (display === "list-item" && !markerOf(style))
     if (hasElements && !hasSupportedLayout) {
       record(path, "display", display)
     }
     enter(contextElement)
     recordDropped(node, path, hasText)
+    if (style.position === "absolute") {
+      recordAbsolute(node, path, children, contextElement)
+    }
     Object.assign(entry, { hasText, children })
     elements.push(entry)
     return [entry]
@@ -337,16 +419,14 @@ const readFrame = ({
         ? [...boxProperties, ...textProperties]
         : boxProperties
       const computed = element.computedStyleMap()
-      return {
-        ...Object.fromEntries(
-          properties.map((property) => [
-            property,
-            style.getPropertyValue(property),
-          ])
-        ),
-        width: String(computed.get("width")),
-        height: String(computed.get("height")),
-      }
+      return Object.fromEntries(
+        properties.map((property) => [
+          property,
+          computedProperties.includes(property)
+            ? String(computed.get(property))
+            : style.getPropertyValue(property),
+        ])
+      )
     })
   const tokenValues = (element) => {
     const style = getComputedStyle(element)
@@ -360,6 +440,25 @@ const readFrame = ({
     inspect?.()
     for (const { name } of sentinels) {
       frame.style.removeProperty(name)
+    }
+    return values
+  }
+  const readDirectTokenUses = (sentinels) => {
+    const pinned = elements.map(({ element }) => ({
+      element,
+      authored: element.getAttribute("style"),
+      fontSize: getComputedStyle(element).fontSize,
+    }))
+    for (const { element, fontSize } of pinned) {
+      element.style.setProperty("font-size", fontSize, "important")
+    }
+    const values = readMarked(sentinels)
+    for (const { element, authored } of pinned) {
+      if (authored === null) {
+        element.removeAttribute("style")
+      } else {
+        element.setAttribute("style", authored)
+      }
     }
     return values
   }
@@ -383,7 +482,7 @@ const readFrame = ({
   const marked = [
     readMarked(first, recordRedeclared),
     readMarked(second),
-    readMarked(withoutFontSizes),
+    readDirectTokenUses(first),
   ]
 
   const splitParts = (value) => {
@@ -419,44 +518,49 @@ const readFrame = ({
 
   const decide = (
     real,
-    [markedFirst, markedSecond, markedWithoutFontSizes]
+    [markedFirst, markedSecond, markedWithFontSizesPinned]
   ) => {
-    if (real === "auto") {
-      return null
-    }
     if (real === markedFirst && real === markedSecond) {
       return { value: real, tokens: [] }
     }
-    const [realParts, firstParts, secondParts, partsWithoutFontSizes] = [
+    const [realParts, firstParts, secondParts, partsWithFontSizesPinned] = [
       real,
       markedFirst,
       markedSecond,
-      markedWithoutFontSizes,
+      markedWithFontSizesPinned,
     ].map(splitParts)
-    const boundAt = (index) => {
+    const boundAt = (index, realPart) => {
       const name = firstNames.get(firstParts[index])
-      return name && secondNames.get(secondParts[index]) === name ? name : null
+      const isBound =
+        name &&
+        secondNames.get(secondParts[index]) === name &&
+        resolvedTokens.get(name) === realPart
+      return isBound ? name : null
     }
     const isAligned =
       realParts.length === firstParts.length &&
       secondParts.length === firstParts.length
     if (!isAligned) {
-      const name = firstParts.length === 1 && boundAt(0)
+      const name = firstParts.length === 1 && boundAt(0, real)
       return name
         ? { value: `var(${name})`, tokens: [name] }
-        : { value: real, tokens: [], unbound: markedWithoutFontSizes !== real }
+        : {
+            value: real,
+            tokens: [],
+            unbound: markedWithFontSizesPinned !== real,
+          }
     }
     const found = []
     let unbound = false
     const parts = realParts.map((part, index) => {
-      const name = boundAt(index)
+      const name = boundAt(index, part)
       if (name) {
         found.push(name)
         return `var(${name})`
       }
       const dependsOnToken =
         firstParts[index] !== part || secondParts[index] !== part
-      if (dependsOnToken && partsWithoutFontSizes[index] !== part) {
+      if (dependsOnToken && partsWithFontSizesPinned[index] !== part) {
         unbound = true
       }
       return part
@@ -483,6 +587,45 @@ const readFrame = ({
     return `${round(height)}px`
   }
 
+  // Chromium floors a length to 1/64 px and prints six significant digits.
+  // Paper keeps three decimals, so the length is rounded up to three.
+  const usedLength = (style, property) => {
+    const sixtyFourths = Math.round(
+      parseFloat(style.getPropertyValue(property)) * 64
+    )
+    return `${Math.ceil(sixtyFourths * 15.625) / 1000}px`
+  }
+  // Paper moves an absolute layer to where it paints among its siblings, which
+  // moves a box placed at its static position.
+  const pinStaticPosition = ({ element, styles }) => {
+    const style = getComputedStyle(element)
+    for (const [start, end] of [
+      ["left", "right"],
+      ["top", "bottom"],
+    ]) {
+      if (styles[start].value === "auto" && styles[end].value === "auto") {
+        styles[start] = { value: usedLength(style, start), tokens: [] }
+      }
+    }
+  }
+
+  // Paper rounds a percentage width or height to a whole pixel, and wraps text
+  // anywhere, which shrinks a min-content size to one character.
+  const pinUsedSize = ({ element, styles }) => {
+    const style = getComputedStyle(element)
+    for (const property of ["width", "height"]) {
+      const { value } = styles[property]
+      const used = usedLength(style, property)
+      const isRounded =
+        value.endsWith("%") &&
+        value !== "100%" &&
+        !Number.isInteger(parseFloat(used))
+      if (isRounded || value === "min-content") {
+        styles[property] = { value: used, tokens: [] }
+      }
+    }
+  }
+
   const colorPattern = new RegExp(colorSource, "g")
   const colors = {}
   elements.forEach((entry, index) => {
@@ -492,9 +635,6 @@ const readFrame = ({
         real[index][property],
         marked.map((values) => values[index][property])
       )
-      if (!decided) {
-        continue
-      }
       // Paper's own normal line height differs from Chromium's at some sizes.
       if (property === "line-height" && decided.value === "normal") {
         decided.value = usedLineHeight(entry.element)
@@ -507,6 +647,10 @@ const readFrame = ({
         )
       }
     }
+    if (entry.styles.position.value === "absolute") {
+      pinStaticPosition(entry)
+    }
+    pinUsedSize(entry)
     const { width, height } = rects[index]
     entry.size = { width: round(width), height: round(height) }
     delete entry.element
@@ -525,6 +669,7 @@ const flattenFrame = async (page, tokens) => {
   const { tree, colors, unsupported } = await page.evaluate(readFrame, {
     tokens,
     boxProperties,
+    computedProperties,
     textProperties,
     emittedProperties,
     ignoredProperties,
@@ -534,6 +679,16 @@ const flattenFrame = async (page, tokens) => {
     widgetInputs,
     colorSource: colorPattern.source,
     markerSource: String(markerOf),
+    heldBackgroundSource: String(isHeldBackground),
+    sizeConstraints,
+    insets: sides,
+    harmlessSources: harmlessValues.map(([property, pattern]) => [
+      property,
+      pattern.source,
+    ]),
+    tagDefaults,
+    backgroundLonghands,
+    movesOrTurnsSource: movesOrTurns.source,
   })
   const layers = []
   const bindings = []
@@ -577,7 +732,7 @@ const flattenFrame = async (page, tokens) => {
       node.name && ` layer-name="${escapeAttribute(node.name)}"`,
       style && ` style="${escapeAttribute(style)}"`,
     ].join("")
-    return `<div${attributes}>${node.children.map(render).join("")}</div>`
+    return `<div${attributes}>${toPaperOrder(node.children).map(render).join("")}</div>`
   }
 
   const html = render(tree)

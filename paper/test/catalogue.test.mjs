@@ -104,7 +104,8 @@ const mountCases = (cases) => {
       !identities.includes(`${property}: ${computed}`)
     const isUnbound =
       constraints.includes(property) && size(element) === size(plain)
-    return isChanged && !isUnbound
+    const isInert = property === "vertical-align"
+    return isChanged && !isUnbound && !isInert
       ? [{ slot: element.dataset.slot, property, value }]
       : []
   })
@@ -145,7 +146,7 @@ test("records each value the catalogue declares for a property it neither emits 
           property.startsWith(entry.property)
       )
   )
-  assert.ok(changed.length > 200, `${changed.length} declared values apply`)
+  assert.ok(changed.length > 30, `${changed.length} declared values apply`)
   assert.deepEqual(
     unrecorded.map(({ property, value }) => `${property}: ${value}`),
     []

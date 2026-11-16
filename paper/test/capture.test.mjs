@@ -280,6 +280,32 @@ describe("token binding", () => {
     assert.deepEqual(result.unbound, [])
   })
 
+  test("binds a token inside max() only on the side where it is the value used", async () => {
+    const result = await capture(
+      `<div data-slot="pad" style="padding-left: max(var(--space-2), 10px); padding-right: max(var(--space-3), 10px)"></div>`
+    )
+    assert.equal(
+      elementTag(result, "pad"),
+      `<div layer-name="pad" style="padding: 0px var(--space-3) 0px 10px">`
+    )
+    assert.deepEqual(result.unbound, [
+      {
+        layer: layerPath("pad"),
+        property: "padding",
+        value: "0px var(--space-3) 0px 10px",
+      },
+    ])
+  })
+
+  test("records a font-size token used in another property as unbound", async () => {
+    const result = await capture(
+      `<div data-slot="pad" style="padding: calc(var(--text-xs) * 2)"></div>`
+    )
+    assert.deepEqual(result.unbound, [
+      { layer: layerPath("pad"), property: "padding", value: "24px" },
+    ])
+  })
+
   test("records the colours the CSS authored as literals", async () => {
     const result = await capture(
       `<div data-slot="swatch" style="background-color: #fff; color: var(--ink)">Text</div>`
@@ -328,39 +354,24 @@ describe("line-height: normal", () => {
 describe("what the flattener does not emit", () => {
   const cases = [
     [
-      "margin",
-      `style="display: flex; margin: 8px"`,
-      ["margin-bottom", "margin-left", "margin-right", "margin-top"],
-    ],
-    [
-      "position",
-      `style="display: flex; position: relative; top: 5px"`,
+      "position: fixed",
+      `style="display: flex; position: fixed; top: 5px"`,
       ["position", "top"],
     ],
     [
-      "position without an offset or a turn",
-      `style="display: flex; position: relative; rotate: 0deg"`,
-      ["position"],
-    ],
-    [
-      "a transform",
-      `style="display: flex; transform: rotate(45deg)"`,
+      "a transform that scales",
+      `style="display: flex; transform: rotate(45deg) scale(2)"`,
       ["transform"],
     ],
+    ["scale", `style="display: flex; scale: 2"`, ["scale"]],
     [
-      "visibility: hidden",
-      `style="display: flex; visibility: hidden"`,
-      ["visibility"],
+      "a lone gradient that does not repeat",
+      `style="display: flex; background-image: linear-gradient(red, blue); background-repeat: no-repeat"`,
+      ["background-image", "background-repeat"],
     ],
     [
-      "a gradient",
-      `style="display: flex; background-image: linear-gradient(red, blue)"`,
-      ["background-image"],
-    ],
-    ["min-width", `style="display: flex; min-width: 200px"`, ["min-width"]],
-    [
-      "overflow clipping",
-      `style="display: flex; overflow: hidden"`,
+      "a scroll container",
+      `style="display: flex; overflow: scroll"`,
       ["overflow-x", "overflow-y"],
     ],
     ["direction", `dir="rtl" style="display: flex"`, ["direction"]],
@@ -432,17 +443,7 @@ describe("what the flattener does not emit", () => {
     [
       "an image",
       `<img data-slot="x" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="20">`,
-      ["aspect-ratio", "element"],
-    ],
-    [
-      "tabular numbers",
-      `<div data-slot="x" style="font-variant-numeric: tabular-nums">10:45</div>`,
-      ["font-variant-numeric"],
-    ],
-    [
-      "a decoration colour from a token",
-      `<div data-slot="x" style="text-decoration: underline; text-decoration-color: var(--line)">Link</div>`,
-      ["text-decoration-color"],
+      ["element"],
     ],
     [
       "a clip path",
@@ -450,19 +451,9 @@ describe("what the flattener does not emit", () => {
       ["clip-path"],
     ],
     [
-      "a filter",
-      `<div data-slot="x" style="width: 20px; height: 20px; filter: blur(2px)"></div>`,
-      ["filter"],
-    ],
-    [
-      "the basis of flex: 1",
-      `<div data-slot="x" style="flex: 1">Grow</div>`,
-      ["flex-basis"],
-    ],
-    [
-      "a background position",
-      `<div data-slot="x" style="width: 20px; height: 20px; background-position: right 10px center"></div>`,
-      ["background-position"],
+      "a background image from a url",
+      `<div data-slot="x" style="width: 20px; height: 20px; background-image: url(&quot;data:image/gif;base64,R0lGODlhAQABAAAAACw=&quot;)"></div>`,
+      ["background-image"],
     ],
   ]
   for (const [label, html, expected] of paints) {
@@ -485,15 +476,25 @@ describe("what the flattener does not emit", () => {
     ])
   })
 
-  test("records the margins a heading and a paragraph have and a div does not", async () => {
+  test("records vertical-align on an inline box", async () => {
     const result = await capture(
-      `<h4 data-slot="h">Title</h4><p data-slot="p">Text</p>`
+      `<div data-slot="line"><span data-slot="x" style="display: inline-block; vertical-align: middle">Icon</span></div>`
+    )
+    assert.deepEqual(unsupportedAt(result, layerPath("line > x")), [
+      "vertical-align",
+    ])
+  })
+
+  test("records a fieldset's legend, which lays itself out", async () => {
+    const result = await capture(
+      `<fieldset style="display: flex; margin: 0; padding: 0; border: 0"><legend data-slot="x" style="padding: 0">Title</legend></fieldset>`
     )
     assert.deepEqual(result.unsupported, [
-      { layer: layerPath("h"), property: "margin-bottom", value: "21.28px" },
-      { layer: layerPath("h"), property: "margin-top", value: "21.28px" },
-      { layer: layerPath("p"), property: "margin-bottom", value: "16px" },
-      { layer: layerPath("p"), property: "margin-top", value: "16px" },
+      {
+        layer: layerPath("fieldset > x"),
+        property: "element",
+        value: "legend",
+      },
     ])
   })
 
