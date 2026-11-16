@@ -198,6 +198,15 @@ const readFrame = ({
   // which never carries it.
   const isEmittedBy = (hasText) => (property) =>
     emitted.has(property) && (hasText || property !== "text-decoration-line")
+  const markerOf = ({ display, listStyleImage, listStyleType }) => {
+    if (!display.includes("list-item")) {
+      return null
+    }
+    if (listStyleImage !== "none") {
+      return listStyleImage
+    }
+    return listStyleType === "none" ? null : listStyleType
+  }
   const recordDropped = (node, path, hasText) => {
     for (const [property, value] of dropped(
       node,
@@ -213,8 +222,9 @@ const readFrame = ({
       }
     }
     const style = getComputedStyle(node)
-    if (style.display.includes("list-item") && style.listStyleType !== "none") {
-      record(path, "::marker", style.listStyleType)
+    const marker = markerOf(style)
+    if (marker) {
+      record(path, "::marker", marker)
     }
     const isWidgetInput =
       node.localName === "input" && widgetInputs.includes(node.type)
@@ -266,7 +276,8 @@ const readFrame = ({
     if (node.nodeType !== Node.ELEMENT_NODE) {
       return []
     }
-    const { display } = getComputedStyle(node)
+    const style = getComputedStyle(node)
+    const { display } = style
     if (display === "none") {
       return []
     }
@@ -303,7 +314,10 @@ const readFrame = ({
     if (hasText && hasElements) {
       record(path, "children", "text and elements")
     }
-    if (hasElements && !/^(block|(inline-)?flex)$/.test(display)) {
+    const hasSupportedLayout =
+      /^(block|(inline-)?flex)$/.test(display) ||
+      (display === "list-item" && !markerOf(style))
+    if (hasElements && !hasSupportedLayout) {
       record(path, "display", display)
     }
     enter(contextElement)

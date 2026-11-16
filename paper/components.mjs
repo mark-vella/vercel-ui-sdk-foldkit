@@ -31,7 +31,14 @@ const readCapture = async (name) => {
   const [html, sidecar] = await Promise.all([
     readFile(`${base}.html`, "utf8"),
     readFile(`${base}.json`, "utf8"),
-  ])
+  ]).catch((error) => {
+    if (error.code !== "ENOENT") {
+      throw error
+    }
+    throw new PrerequisiteError(
+      `${name} isn't captured. Run \`scripts/test-slot.sh node paper/capture.mjs ${name}\` first.`
+    )
+  })
   return { html: html.trim(), sidecar: JSON.parse(sidecar) }
 }
 

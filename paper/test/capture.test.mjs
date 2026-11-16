@@ -1,7 +1,10 @@
 import assert from "node:assert/strict"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import { after, before, describe, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { captureFrame, launchBrowser } from "../capture.mjs"
+import { captureExamples, captureFrame, launchBrowser } from "../capture.mjs"
 import { readCodeTokens } from "../tokens.mjs"
 
 const repo = fileURLToPath(new URL("../..", import.meta.url))
@@ -65,6 +68,34 @@ describe("the capture page", () => {
         height: layer(result, layerPath("code")).height,
       },
       { width: 60, height: 20 }
+    )
+  })
+})
+
+describe("settling", () => {
+  test("waits until the example stops changing before reading it", async () => {
+    const result = await captureFrame(browser, {
+      name: "fixture/case",
+      root: repo,
+      stylesheets: ["/examples/styles/tokens.css"],
+      mount: (page) =>
+        page.locator(".example-content").evaluate((preview) => {
+          const grow = (remaining) => {
+            if (remaining > 0) {
+              preview.append(document.createElement("div"))
+              requestAnimationFrame(() => grow(remaining - 1))
+            }
+          }
+          grow(6)
+        }),
+      tokens,
+    })
+    assert.deepEqual(
+      {
+        isSettled: result.isSettled,
+        height: layer(result, "fixture/case > preview").height,
+      },
+      { isSettled: true, height: 6 * 12 - 12 }
     )
   })
 })
@@ -387,6 +418,32 @@ describe("what the flattener does not emit", () => {
     ])
   })
 
+  test("records nothing for a list that draws no markers", async () => {
+    const result = await capture(
+      `<ul data-slot="list" style="margin: 0; padding: 0; list-style: none"><li data-slot="item"><div>One</div><div>Two</div></li></ul>`
+    )
+    assert.deepEqual(result.unsupported, [])
+  })
+
+  for (const [label, listStyle, marker] of [
+    ["a list item's marker", "", "disc"],
+    [
+      "a list item's image marker",
+      "list-style: linear-gradient(red, blue)",
+      "linear-gradient(rgb(255, 0, 0), rgb(0, 0, 255))",
+    ],
+  ]) {
+    test(`records ${label}`, async () => {
+      const result = await capture(
+        `<ul style="margin: 0; ${listStyle}"><li data-slot="item"><div>One</div></li></ul>`
+      )
+      assert.deepEqual(
+        result.unsupported.filter(({ property }) => property === "::marker"),
+        [{ layer: layerPath("ul > item"), property: "::marker", value: marker }]
+      )
+    })
+  }
+
   test("records nothing for a min-width that does not bind", async () => {
     const result = await capture(
       `<div style="display: flex"><div data-slot="x" style="min-width: 0">Text</div></div>`
@@ -404,5 +461,36 @@ describe("what the flattener does not emit", () => {
       `<div data-slot="x" style="display: flex; padding: var(--space-2); background-color: var(--paper)">Text</div>`
     )
     assert.deepEqual(result.unsupported, [])
+  })
+})
+
+describe("a batch of examples", () => {
+  test("captures the others after one fails, and reports the failure", async () => {
+    const outFolder = await mkdtemp(path.join(tmpdir(), "paper-capture-"))
+    try {
+      const results = await Array.fromAsync(
+        captureExamples(browser, ["nope/missing", "button/basic"], {
+          outFolder,
+        })
+      )
+      assert.deepEqual(
+        results.map(({ name, error }) => ({ name, error })),
+        [
+          {
+            name: "nope/missing",
+            error:
+              "nope/missing is not an example. Run `ls examples/components/*/web` to list them.",
+          },
+          { name: "button/basic", error: undefined },
+        ]
+      )
+      const saved = await readFile(
+        path.join(outFolder, "button/basic.json"),
+        "utf8"
+      )
+      assert.equal(JSON.parse(saved).name, "button/basic")
+    } finally {
+      await rm(outFolder, { recursive: true })
+    }
   })
 })

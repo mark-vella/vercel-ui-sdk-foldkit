@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
+import { existsSync } from "node:fs"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import path from "node:path"
@@ -11,7 +12,7 @@ import { readCodeTokens } from "./tokens.mjs"
 const usage = "Usage: node paper/capture.mjs <component/example>..."
 const repo = fileURLToPath(new URL("..", import.meta.url))
 const built = path.join(repo, "apps/docs/public")
-const outFolder = path.join(repo, "paper/out")
+const defaultOutFolder = path.join(repo, "paper/out")
 const origin = "https://capture.paper"
 const geistFonts = path.join(
   path.dirname(
@@ -44,9 +45,12 @@ const readBuild = async () => {
   return (name) => {
     const example = entry(name)
     if (!example || !styles[name]) {
-      const [component] = name.split("/")
+      const [component, file] = name.split("/")
+      const source = `examples/components/${component}/web/${file}.ts`
       throw new Error(
-        `${name} isn't built. Run \`EXAMPLES_ONLY=${component} node scripts/build.mjs web styles\` in examples/.`
+        existsSync(path.join(repo, source))
+          ? `${name} isn't built. Run \`EXAMPLES_ONLY=${component} node scripts/build.mjs web styles\` in examples/.`
+          : `${name} is not an example. Run \`ls examples/components/*/web\` to list them.`
       )
     }
     return {
@@ -111,12 +115,36 @@ const mountExample = (page, { script, mount }) =>
     { script, mount }
   )
 
+const waitUntilSettled = async () => {
+  await document.fonts.ready
+  const twoFrames = () =>
+    new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+    )
+  let hasChanged = true
+  const observer = new MutationObserver(() => {
+    hasChanged = true
+  })
+  observer.observe(document.body, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    characterData: true,
+  })
+  for (let attempt = 0; hasChanged && attempt < 60; attempt++) {
+    hasChanged = false
+    await twoFrames()
+  }
+  observer.disconnect()
+  return !hasChanged
+}
+
 const launchBrowser = () =>
   chromium.launch({ args: ["--font-render-hinting=none"] })
 
 const captureFrame = async (
   browser,
-  { name, root, stylesheets, mount, tokens }
+  { name, root, stylesheets, mount, tokens, inspect }
 ) => {
   const page = await browser.newPage({
     colorScheme: "light",
@@ -127,15 +155,11 @@ const captureFrame = async (
     await serve(page, { html: pageHtml(name, stylesheets), root })
     await page.goto(`${origin}/`)
     await mount(page)
-    await page.evaluate(async () => {
-      await document.fonts.ready
-      await new Promise((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(resolve))
-      )
-    })
+    const isSettled = await page.evaluate(waitUntilSettled)
+    const inspection = await inspect?.(page)
     const flat = await flattenFrame(page, tokens)
     const png = await page.locator("[data-example]").screenshot()
-    return { ...flat, png }
+    return { ...flat, png, inspection, isSettled }
   } finally {
     await page.close()
   }
@@ -170,19 +194,50 @@ const saveCapture = async (base, { name, commit, sources }, flat) => {
   return sidecar
 }
 
-const captureExample = async (browser, { name, example, tokens, commit }) => {
-  const flat = await captureFrame(browser, {
+const captureExample = async (
+  browser,
+  { name, example, tokens, commit, outFolder, inspect }
+) => {
+  const { inspection, isSettled, ...flat } = await captureFrame(browser, {
     name,
     root: built,
     stylesheets: example.stylesheets,
     mount: (page) => mountExample(page, example),
     tokens,
+    inspect,
   })
-  return saveCapture(
+  const sidecar = await saveCapture(
     path.join(outFolder, name),
     { name, commit, sources: example.sources },
     flat
   )
+  return { name, sidecar, html: flat.html, inspection, isSettled }
+}
+
+const captureExamples = async function* (
+  browser,
+  names,
+  { outFolder = defaultOutFolder, inspect } = {}
+) {
+  const resolveExample = await readBuild()
+  const { tokens } = await readCodeTokens()
+  const commit = readCommit()
+  for (const name of names) {
+    let result
+    try {
+      result = await captureExample(browser, {
+        name,
+        example: resolveExample(name),
+        tokens,
+        commit,
+        outFolder,
+        inspect,
+      })
+    } catch (error) {
+      result = { name, error: error.message.split("\n")[0] }
+    }
+    yield result
+  }
 }
 
 if (import.meta.main) {
@@ -192,22 +247,17 @@ if (import.meta.main) {
     process.exit(2)
   }
 
-  const resolveExample = await readBuild()
-  const examples = names.map((name) => ({
-    name,
-    example: resolveExample(name),
-  }))
-  const { tokens } = await readCodeTokens()
-  const commit = readCommit()
   const browser = await launchBrowser()
   try {
-    for (const { name, example } of examples) {
-      const sidecar = await captureExample(browser, {
-        name,
-        example,
-        tokens,
-        commit,
-      })
+    for await (const { name, sidecar, error } of captureExamples(
+      browser,
+      names
+    )) {
+      if (error) {
+        console.error(`${name}: failed, ${error}`)
+        process.exitCode = 1
+        continue
+      }
       const { width, height } = sidecar.frame
       console.log(
         `${name}: ${width}x${height}, ${sidecar.layers.length} layers, ${sidecar.bindings.length} bindings, ${sidecar.unbound.length} unbound, ${sidecar.unsupported.length} unsupported, ${sidecar.hash.slice(0, 12)}`
@@ -218,4 +268,4 @@ if (import.meta.main) {
   }
 }
 
-export { captureFrame, launchBrowser, readCommit, saveCapture }
+export { captureExamples, captureFrame, launchBrowser, readCommit, saveCapture }

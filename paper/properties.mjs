@@ -65,6 +65,7 @@ const ignoredProperties = [
   "transform-origin",
   "perspective-origin",
   "-webkit-text-decorations-in-effect",
+  "list-style",
 ]
 const logicalPattern =
   /(^|-)(block|inline)(-|$)|^border-(start|end)-(start|end)-radius$/

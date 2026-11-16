@@ -143,19 +143,22 @@ const tally = (keys) =>
     new Map()
   )
 
-const unmatched = (expected, actual) => {
+const unmatched = (expected, actual, exported) => {
   const [inCapture, inExport] = [tally(expected), tally(actual)]
   const keys = new Set([...inCapture.keys(), ...inExport.keys()])
   return [...keys].flatMap((key) => {
     const surplus = (inCapture.get(key) ?? 0) - (inExport.get(key) ?? 0)
-    const side = surplus > 0 ? "capture" : "Paper's export"
-    return Array.from({ length: Math.abs(surplus) }, () => ({ key, side }))
+    const [side, otherSide] =
+      surplus > 0 ? ["capture", exported] : [exported, "capture"]
+    return Array.from({ length: Math.abs(surplus) }, () => ({
+      key,
+      side,
+      otherSide,
+    }))
   })
 }
 
-const otherSide = (side) => (side === "capture" ? "Paper's export" : "capture")
-
-const compareFrames = (sidecar, rendered) => {
+const compareFrames = (sidecar, rendered, exported = "Paper's export") => {
   const names = layerNames(sidecar)
   const named = (path) =>
     path
@@ -172,14 +175,14 @@ const compareFrames = (sidecar, rendered) => {
   )
   if (position >= 0) {
     differences.push(
-      `layer ${position + 1} is ${actual[position]?.key ?? "missing"} in Paper's export, ${expected[position]?.key ?? "missing"} in capture`
+      `layer ${position + 1} is ${actual[position]?.key ?? "missing"} in ${exported}, ${expected[position]?.key ?? "missing"} in capture`
     )
   } else {
     expected.forEach((layer, index) => {
       const { width, height } = actual[index]
       if (width !== layer.width || height !== layer.height) {
         differences.push(
-          `${layer.key} is ${width}x${height} in Paper's export, ${layer.width}x${layer.height} in capture`
+          `${layer.key} is ${width}x${height} in ${exported}, ${layer.width}x${layer.height} in capture`
         )
       }
     })
@@ -189,22 +192,24 @@ const compareFrames = (sidecar, rendered) => {
       ({ layer, property, token }) =>
         `${named(layer)}: ${property} is bound to ${token}`
     )
-  for (const { key, side } of unmatched(
+  for (const { key, side, otherSide } of unmatched(
     bindings(sidecar),
-    bindings(rendered)
+    bindings(rendered),
+    exported
   )) {
-    differences.push(`${key} in ${side}, not in ${otherSide(side)}`)
+    differences.push(`${key} in ${side}, not in ${otherSide}`)
   }
   const literals = ({ literals }) =>
     literals.map(
       ({ layer, property, value }) =>
         `${named(layer)}: ${property} has the literal ${value}`
     )
-  for (const { key, side } of unmatched(
+  for (const { key, side, otherSide } of unmatched(
     literals(sidecar),
-    literals(rendered)
+    literals(rendered),
+    exported
   )) {
-    differences.push(`${key} in ${side}, not in ${otherSide(side)}`)
+    differences.push(`${key} in ${side}, not in ${otherSide}`)
   }
   for (const { layer, property, value } of sidecar.unsupported) {
     differences.push(`${layer}: ${property} ${value} is not imported`)
@@ -234,4 +239,33 @@ const checkExport = async (browser, { jsx, tree, sidecar, tokens }) => {
   return [...hidden, ...compareFrames(sidecar, rendered)]
 }
 
-export { checkExport, flattenTree, parseTree }
+const mountEmitted = (html) => {
+  const template = document.createElement("template")
+  template.innerHTML = html
+  for (const element of template.content.querySelectorAll("[layer-name]")) {
+    element.dataset.paperLayer = element.getAttribute("layer-name")
+  }
+  for (const element of template.content.querySelectorAll("div")) {
+    element.style.boxSizing = "border-box"
+  }
+  for (const svg of template.content.querySelectorAll("svg")) {
+    svg.style.flexShrink = "0"
+  }
+  const root = template.content.firstElementChild
+  root.dataset.example = ""
+  document.querySelector("[data-example]").replaceWith(root)
+}
+
+const checkEmitted = async (browser, { sidecar, html, tokens }) => {
+  const rendered = await captureFrame(browser, {
+    name: sidecar.name,
+    root: repo,
+    stylesheets: ["/examples/styles/tokens.css"],
+    mount: (page) => page.evaluate(mountEmitted, html),
+    tokens,
+  })
+  const kept = { ...sidecar, unsupported: [] }
+  return compareFrames(kept, rendered, "the emitted HTML")
+}
+
+export { checkEmitted, checkExport, flattenTree, parseTree }
