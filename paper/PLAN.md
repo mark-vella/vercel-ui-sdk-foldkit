@@ -217,23 +217,23 @@ The exact provider instance for Opus 5.5 high is a kickoff obligation, resolved 
 
 **Resolution record.** Adapter `t3`, from a live `orchestrator_capabilities` answer on 2026-11-15. Coordinator: `claude-fable-5-2`, effort xhigh. Worker, fixer, reviewer, recheck and decomment: provider instance `claudeAgent`, model `claude-opus-5-5`, effort high, from the run statement. No codemode tool is in the session catalog, so the runner is the local Node program.
 
-**Scratch file.** `ui-sdk probe`, id `01M7GC1T67A9KMGNTCM6JP4EB3`. Units U1 to U4 write there. The kit file is `01M7F5MBD4CPPWD9P0G739TERM`.
+**Scratch files.** `ui-sdk probe`, id `01M7GC1T67A9KMGNTCM6JP4EB3`, `ui-sdk probe pages`, `01M7GD588B93A45SFHNMBJVRMX`, `ui-sdk probe review`, `01M7GF5MY6FQQ5MCWRMQZ6MQXN`, and `ui-sdk probe four`, `01M7JP29WCMEDZPPCDNWPKT8NC`. Units U1 to U4 and their reviews write there, one writer to a file. All four are archived at the end. The kit file is `01M7F5MBD4CPPWD9P0G739TERM`.
 
 **Work folder.** `.swe-mode/paper-kit/` in this worktree, ignored locally. It holds briefs and reports.
 
-| Unit | Status  | Head      | Notes                                                                                                                                                                                                                                                                                                                     |
-| ---- | ------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| U0   | done    | `fa82f52` | `pnpm install --frozen-lockfile` exit 0. Chromium 153 launches through Playwright. Paper probe lists 41 tools. Defaults taken for the pending decisions.                                                                                                                                                                  |
-| U1   | done    | `f3d94ed` | 36 tokens synced to the scratch file, 7 skipped. Repeat sync makes 0 writes. Verify exits 0 and fails on drift. Review `APPROVE` on patch id `f5c98d8`.                                                                                                                                                                   |
-| U2   | done    | `b8b635b` | Three fix rounds. Verify was rebuilt on a round trip in round 2. Both lanes `APPROVE`: sync and verify at the round 3 recheck, capture after one re-rating, answered by a fresh reviewer that recaptured all 574 examples. All 574 capture with exit 0, and 37 drop nothing. 53 tests at this head.                       |
-| U3   | done    | `6ea8613` | `node paper/census.mjs` classifies all 574 examples in about nine minutes. One fix round. Recheck `APPROVE` on whole patch id `e695246`. Capture now waits for the page to settle. The false list losses are gone. 85 tests.                                                                                              |
-| U4   | active  | `711c654` | Everything before U4b is done and approved, U4o last. The capture now compares the live example's picture with the flattened HTML's, so all three pictures of a frame are compared with no tolerance. 96 of 574 frames are faithful imports in Paper. 141 tests. U4b is running in three lanes, each in its own checkout. |
-| U5   | pending |           |                                                                                                                                                                                                                                                                                                                           |
-| U6   | done    | `466d73b` | Six pages and two dividers. Repeat sync makes 0 writes. Review `APPROVE` on patch id `568b546`. Merged with U2's dispatch code by the coordinator, rechecked with U2.                                                                                                                                                     |
-| U7   | done    | `3b24c84` | Six artboards on `01 Foundations`, 36 of 36 code tokens bound. Artboards land on named pages. Sync stops before writing when pages or tokens are missing. One fix round. Recheck `APPROVE` on whole patch id `f6eed36`. 66 tests.                                                                                         |
-| U8   | pending |           |                                                                                                                                                                                                                                                                                                                           |
-| U9   | pending |           |                                                                                                                                                                                                                                                                                                                           |
-| U10  | pending |           |                                                                                                                                                                                                                                                                                                                           |
+| Unit | Status  | Head      | Notes                                                                                                                                                                                                                                                                                                      |
+| ---- | ------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| U0   | done    | `fa82f52` | `pnpm install --frozen-lockfile` exit 0. Chromium 153 launches through Playwright. Paper probe lists 41 tools. Defaults taken for the pending decisions.                                                                                                                                                   |
+| U1   | done    | `f3d94ed` | 36 tokens synced to the scratch file, 7 skipped. Repeat sync makes 0 writes. Verify exits 0 and fails on drift. Review `APPROVE` on patch id `f5c98d8`.                                                                                                                                                    |
+| U2   | done    | `b8b635b` | Three fix rounds. Verify was rebuilt on a round trip in round 2. Both lanes `APPROVE`: sync and verify at the round 3 recheck, capture after one re-rating, answered by a fresh reviewer that recaptured all 574 examples. All 574 capture with exit 0, and 37 drop nothing. 53 tests at this head.        |
+| U3   | done    | `6ea8613` | `node paper/census.mjs` classifies all 574 examples in about nine minutes. One fix round. Recheck `APPROVE` on whole patch id `e695246`. Capture now waits for the page to settle. The false list losses are gone. 85 tests.                                                                               |
+| U4   | active  | `e6ee3e7` | The first pass of U4b ran in three lanes and was merged in U4m. Two reviewers approved the merge. 327 of 574 frames are faithful imports, and all 327 were synced to a scratch file and pass verify there. 39 of 54 components have a faithful frame. 185 tests. The second pass, U4p, runs in four lanes. |
+| U5   | pending |           |                                                                                                                                                                                                                                                                                                            |
+| U6   | done    | `466d73b` | Six pages and two dividers. Repeat sync makes 0 writes. Review `APPROVE` on patch id `568b546`. Merged with U2's dispatch code by the coordinator, rechecked with U2.                                                                                                                                      |
+| U7   | done    | `3b24c84` | Six artboards on `01 Foundations`, 36 of 36 code tokens bound. Artboards land on named pages. Sync stops before writing when pages or tokens are missing. One fix round. Recheck `APPROVE` on whole patch id `f6eed36`. 66 tests.                                                                          |
+| U8   | pending |           |                                                                                                                                                                                                                                                                                                            |
+| U9   | pending |           |                                                                                                                                                                                                                                                                                                            |
+| U10  | pending |           |                                                                                                                                                                                                                                                                                                            |
 
 ## The census
 
@@ -284,6 +284,47 @@ Losses by how many kinds a frame records, at `59a84de`: none 96, one kind 108, t
 
 **Content with no faithful form in Paper needs a rule, and it is Mark's to confirm.** A canvas, a native range input, password masking, a gradient that is not in oklab, and a remote image cannot be made pixel-identical. Proposed: such a frame carries a named, accepted difference. The name and reason live in code in one short list, the frame says so in its provenance text in Paper, verify reports it as accepted and not as passed, and the cover lists every such frame. Nothing passes silently. Until Mark confirms, those frames stay red.
 
+## After the first pass of U4b
+
+**Merged in U4m,** `e6ee3e7`. The three lanes' patches were applied onto one tree, with real conflicts only in `paper/flatten.mjs` and `paper/flatten/records.mjs`. Two reviewers approved it, one on the merge and the count, one on the fixes. Every frame any lane cleared is still clean.
+
+- 327 of 574 frames record nothing, against 96 before the lanes. All 327 were synced to a scratch file and pass `verify components`, measured by the worker and again by a reviewer.
+- 35 more frames lose only a token link. They pass, and verify prints each lost link as a note.
+- 39 of 54 components have a faithful frame, and 12 are faithful in every frame. None yet in avatar, calendar, carousel, color-picker, date-input, date-picker, file-input, image-cropper, rating, scroll-area, slider, textarea, timeline, token-input and waterfall.
+- 280 of the 502 examples the docs reference are faithful.
+- A layer whose size differs between the example and the flattened HTML is now recorded as `size`, beside `picture`. A unitless line height is emitted as the length Chromium lays out, since Chromium floors it to 1/64 px and rounds a length.
+
+**What keeps the other 247 red,** by the kinds a frame records, with `picture` and `size` left out because they are what a cause looks like:
+
+| Frames | Kinds                                                               | Component                                                                 |
+| ------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 36     | a token link only                                                   | accordion, listbox, switch, tree                                          |
+| 24     | tables                                                              | calendar                                                                  |
+| 21     | the resize grabber                                                  | textarea, trigger-menu, and a textarea inside accordion, tabs and toolbar |
+| 18     | a hidden native range input at `opacity: 0`, with background layers | slider, and a slider inside label and image-cropper                       |
+| 15     | `position: fixed` in the top layer                                  | toast                                                                     |
+| 14     | `box-sizing: content-box`                                           | date-input                                                                |
+| 14     | scroll snap and `interactivity`                                     | carousel                                                                  |
+| 13     | a picture difference with no cause named                            | six right-to-left frames, command, tree, combobox, scroll-area, drawer    |
+| 12     | an input's own width                                                | date-picker                                                               |
+| 11     | password masking                                                    | password-input                                                            |
+| 7      | a painting `::before`                                               | rating                                                                    |
+
+The rest are groups of one to six frames.
+
+**U4p, the second pass, runs in four lanes:**
+
+- **Tables,** a new `paper/flatten/table.mjs`, then token links in `paper/flatten/bindings.mjs`.
+- **Pseudo:** painting `::before` and `::after`, an inline element in a block, text mixed with elements, control values, `content-visibility`.
+- **Boxes:** an input's width, `box-sizing`, button and select width, a fieldset and its legend, an image, and the six right-to-left frames with no cause named.
+- **Layers:** `position: fixed` and the top layer, a box placed against a far ancestor, clipping, scroll snap, background layers, and seven frames with no cause named. U5 opens popups, which are top-layer boxes, so this lane goes before it.
+
+**Measured in Paper for the token lane.** Paper keeps a token mixed with transparent, written token first, as `color-mix(var(--ink) 8%, transparent)`. That holds in a background, a border colour, an outline, a text colour and inside a box shadow. Paper drops the colour when transparent comes first, when the token is mixed with a literal or a second token, in relative colour syntax, and in an svg stroke.
+
+**Content with no faithful form in Paper, as it stands.** A layer at `opacity: 0`, which Paper deletes whatever it holds: the slider's hidden range input, the scroll area's resting scrollbar, the file input's hidden input. The textarea's resize grabber. Password masking. A gradient Paper rewrites. A canvas. A remote image. About 70 frames stay red for these alone. The rule proposed under "Before U4b" would let them into the kit with the difference named. It is still Mark's to confirm.
+
+**U8's gate needs the same answer.** It says every frame passes verify with nothing dropped, which those frames cannot do. Default until Mark says otherwise: U8 syncs every frame, so the kit holds the whole catalogue, and each frame that loses something lists its losses in its provenance text and in the report. Verify stays red for them.
+
 ## The kit file today
 
 Written by the coordinator on 2026-11-16, after U2 passed, with the commands at commit `ec2cf6f`.
@@ -314,6 +355,7 @@ The briefs, reviews and dispositions are under `.swe-mode/paper-kit/` in the coo
 - **U10, delivery gate.** Verify passes when `paper/out` is stale against the code.
 - **U4b, from the merge's reviews.** A blocked request that no element names is recorded from a callback that can arrive after the frame is read: 1 run in 20 on a made-up frame. The measurement's copy cannot carry a child's pseudo-element or shadow root. The leaf shortcut misses a tag rule scoped to an ancestor. The page's own MutationObservers see the measurement's temporary copy. Twelve tooltip frames ended a loaded census run with one more element in the document, with no effect on output and no cause found.
 - **U4b, from U4o's review.** The gradient rule misses a gradient sized `auto 100%` or `100%`, or placed at `0px 0px` or `50% 50%`, which Paper still rewrites, and records `repeating-linear-gradient`, which Paper keeps. No catalogue example uses those forms. A picture record names the parent when paint overflows its layer. No test covers the `overscroll-behavior` rule. A zero-width border with an explicit colour still records its colour. The Foundations frames skip the picture comparison.
+- **U4p, from the merge's reviews.** An underline with no `text-underline-offset` records nothing and fails verify, because Paper adds `text-underline-position: from-font`: boxes lane. A text-only grid with `align-content` takes the block form and records only `picture`: boxes lane. The `calc()` binder reads the host for a pseudo-element entry and can bind the host's token: pseudo lane. A placeholder's line height is measured with the input's font: pseudo lane. No catalogue frame reaches any of the four today.
 - **No owner yet.** The resize-observer test caught its defect in 15 of 16 runs under load. `tokens`, `pages` and `foundations` ignore extra arguments. Verify names layers by DOM path in drop messages and by layer name elsewhere. A text label equal to a layer name confuses the round trip. `::first-letter` and `::first-line` styles are not recorded. The token guard misses tokens used only by the artboard and the provenance text.
 
 ## Artifact index
