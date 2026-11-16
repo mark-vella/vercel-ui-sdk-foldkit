@@ -3,6 +3,12 @@ import {
   toDeclarations,
   toPaperOrder,
 } from "./declarations.mjs"
+import { createBindings } from "./flatten/bindings.mjs"
+import { createComparison } from "./flatten/compare.mjs"
+import { createRecords } from "./flatten/records.mjs"
+import { createSvgReader } from "./flatten/svg.mjs"
+import { readTree } from "./flatten/tree.mjs"
+import { createUsedValues } from "./flatten/used-values.mjs"
 import {
   backgroundLonghands,
   boxProperties,
@@ -34,7 +40,19 @@ const markerOf = ({ display, listStyleImage, listStyleType }) => {
   return listStyleType === "none" ? null : listStyleType
 }
 
+const pageFunctions = {
+  markerOf,
+  isHeldBackground,
+  createBindings,
+  createComparison,
+  createRecords,
+  createSvgReader,
+  readTree,
+  createUsedValues,
+}
+
 const readFrame = ({
+  sources,
   tokens,
   boxProperties,
   computedProperties,
@@ -46,20 +64,28 @@ const readFrame = ({
   widgets,
   widgetInputs,
   colorSource,
-  markerSource,
-  heldBackgroundSource,
-  sizeConstraints: constraints,
+  sizeConstraints,
   insets,
   harmlessSources,
   tagDefaults,
   backgroundLonghands,
   movesOrTurnsSource,
 }) => {
-  const harmlessValues = new Map(
-    harmlessSources.map(([property, source]) => [property, new RegExp(source)])
+  const {
+    markerOf,
+    isHeldBackground,
+    createBindings,
+    createComparison,
+    createRecords,
+    createSvgReader,
+    readTree,
+    createUsedValues,
+  } = Object.fromEntries(
+    Object.entries(sources).map(([name, source]) => [
+      name,
+      new Function(`return ${source}`)(),
+    ])
   )
-  const markerOf = new Function(`return ${markerSource}`)()
-  const isHeldBackground = new Function(`return ${heldBackgroundSource}`)()
   const frame = document.querySelector("[data-example]")
   const probe = document.head.appendChild(document.createElement("div"))
   const longhands = (property) => {
@@ -91,562 +117,71 @@ const readFrame = ({
     probe.style.setProperty(property, value)
     return getComputedStyle(probe).getPropertyValue(property)
   }
-  const lengthBases = [9000, 8000]
-  const sentinelFor = ({ type }, index, pass) => {
-    if (type === "color") {
-      return ["color", `rgb(1 ${pass + 1} ${index * pass})`]
-    }
-    if (type === "fontFamily") {
-      return ["font-family", `"paper-sentinel-${pass}-${index}"`]
-    }
-    return ["padding-left", `${lengthBases[pass - 1] + index * pass}px`]
-  }
-  const [first, second] = [1, 2].map((pass) =>
-    tokens.map((token, index) => {
-      const [property, value] = sentinelFor(token, index, pass)
-      return { name: token.name, value, serialized: serialize(property, value) }
-    })
-  )
-  const resolver = frame.appendChild(document.createElement("div"))
-  const resolvedTokens = new Map(
-    tokens.map((token, index) => {
-      const [property] = sentinelFor(token, index, 1)
-      resolver.style.setProperty(property, `var(${token.name})`)
-      return [token.name, getComputedStyle(resolver).getPropertyValue(property)]
-    })
-  )
-  resolver.remove()
-  const [firstNames, secondNames] = [first, second].map(
-    (sentinels) =>
-      new Map(sentinels.map(({ name, serialized }) => [serialized, name]))
-  )
+  const bindings = createBindings({
+    frame,
+    tokens,
+    serialize,
+    boxProperties,
+    textProperties,
+    computedProperties,
+  })
 
-  const elements = []
   const unsupported = []
   const record = (layer, property, value) =>
     unsupported.push({ layer, property, value })
+  const comparison = createComparison({
+    compared,
+    insets,
+    harmlessSources,
+    tagDefaults,
+    sizeConstraints,
+  })
+  const { recordDropped, recordAbsolute, recordInlineBoxes } = createRecords({
+    record,
+    emitted,
+    insets,
+    movesOrTurnsSource,
+    backgroundLonghands,
+    isHeldBackground,
+    markerOf,
+    replacedElements,
+    widgets,
+    widgetInputs,
+    reference: comparison.reference,
+    bindsSize: comparison.bindsSize,
+    dropped: comparison.dropped,
+  })
+  const readSvg = createSvgReader({
+    shadow: comparison.shadow,
+    dropped: comparison.dropped,
+    record,
+    round,
+  })
+  const { tree, elements } = readTree({
+    frame,
+    record,
+    markerOf,
+    enter: comparison.enter,
+    readSvg,
+    recordDropped,
+    recordAbsolute,
+    recordInlineBoxes,
+  })
 
-  const host = document.head.appendChild(document.createElement("div"))
-  const shadow = host.attachShadow({ mode: "open" })
-  const reference = shadow.appendChild(document.createElement("div"))
-  const followsColor = (() => {
-    const sample = shadow.appendChild(document.createElement("div"))
-    sample.style.cssText = "all: initial; color: rgb(1, 2, 3)"
-    const style = getComputedStyle(sample)
-    const names = [...style].filter(
-      (property) => style.getPropertyValue(property) === "rgb(1, 2, 3)"
-    )
-    sample.remove()
-    return new Set(names)
-  })()
-  let context = null
-  const enter = (element) => {
-    if (element === context) {
-      return
-    }
-    context = element
-    const style = getComputedStyle(element)
-    host.style.cssText = ""
-    for (const property of style) {
-      const value = style.getPropertyValue(property)
-      // A computed currentcolor is a literal, which would stop following the
-      // colour each reference is given.
-      const isCurrentColor =
-        property !== "color" &&
-        followsColor.has(property) &&
-        value === style.color
-      host.style.setProperty(property, isCurrentColor ? "currentcolor" : value)
-    }
-  }
-  const bindsSize = (node, property, value, measured = [node]) => {
-    const sizes = () =>
-      measured
-        .map((element) => {
-          const { width, height } = element.getBoundingClientRect()
-          return `${width}x${height}`
-        })
-        .join()
-    const before = sizes()
-    const authored = node.getAttribute("style")
-    // Chromium writes CSSOM edits back to the attribute lazily, which leaves
-    // style="" in an svg's outerHTML after removeAttribute.
-    node.setAttribute(
-      "style",
-      `${authored ?? ""}; ${property}: ${value} !important`
-    )
-    const after = sizes()
-    if (authored === null) {
-      node.removeAttribute("style")
-    } else {
-      node.setAttribute("style", authored)
-    }
-    return before !== after
-  }
-  const dropped = (node, references, isEmitted = () => false) => {
-    const style = getComputedStyle(node)
-    for (const reference of references) {
-      reference.style.color = style.color
-    }
-    const referenceStyles = references.map((reference) =>
-      getComputedStyle(reference)
-    )
-    const ownDefaults = tagDefaults[node.localName] ?? []
-    return compared.flatMap((property) => {
-      // getComputedStyle resolves an auto inset of a positioned element to
-      // the length it lands at, which moves nothing.
-      const value = insets.includes(property)
-        ? String(node.computedStyleMap().get(property))
-        : style.getPropertyValue(property)
-      const isHarmless =
-        isEmitted(property, style, node) ||
-        ownDefaults.includes(property) ||
-        (property === "vertical-align" &&
-          !/^(inline|table-cell)/.test(style.display)) ||
-        harmlessValues.get(property)?.test(value) ||
-        referenceStyles.some(
-          (reference) => reference.getPropertyValue(property) === value
-        ) ||
-        (constraints.includes(property) &&
-          !bindsSize(
-            node,
-            property,
-            referenceStyles[0].getPropertyValue(property)
-          ))
-      return isHarmless ? [] : [[property, value]]
-    })
-  }
-  const movesOrTurns = new RegExp(movesOrTurnsSource)
-  const scrolls = (node, property) => {
-    const value = getComputedStyle(node).getPropertyValue(property)
-    const overflows =
-      property === "overflow-x"
-        ? node.scrollWidth > node.clientWidth
-        : node.scrollHeight > node.clientHeight
-    return value === "scroll" || (value === "auto" && overflows)
-  }
-  const isEmittedBy = (hasText) => (property, style, node) => {
-    if (!emitted.has(property)) {
-      return false
-    }
-    if (
-      property.startsWith("text-decoration-") ||
-      property === "text-underline-offset"
-    ) {
-      // text-decoration-line does not inherit: it paints across the text
-      // inside, which never carries it.
-      return hasText
-    }
-    if (property === "position" || insets.includes(property)) {
-      return style.position !== "fixed"
-    }
-    if (property === "overflow-x" || property === "overflow-y") {
-      return !scrolls(node, property)
-    }
-    if (property === "transform") {
-      return movesOrTurns.test(node.computedStyleMap().get(property))
-    }
-    if (backgroundLonghands.includes(property)) {
-      return isHeldBackground(style)
-    }
-    return true
-  }
-  const recordDropped = (node, path, hasText) => {
-    for (const [property, value] of dropped(
-      node,
-      [reference],
-      isEmittedBy(hasText)
-    )) {
-      record(path, property, value)
-    }
-    for (const pseudo of ["::before", "::after"]) {
-      const { content } = getComputedStyle(node, pseudo)
-      if (content !== "none" && content !== "normal") {
-        record(path, pseudo, content)
-      }
-    }
-    const style = getComputedStyle(node)
-    const marker = markerOf(style)
-    if (marker) {
-      record(path, "::marker", marker)
-    }
-    const isSizedAsContentBox =
-      style.boxSizing === "content-box" &&
-      bindsSize(node, "box-sizing", "border-box")
-    if (isSizedAsContentBox) {
-      record(path, "box-sizing", "content-box")
-    }
-    const isWidgetInput =
-      node.localName === "input" && widgetInputs.includes(node.type)
-    const drawsItself =
-      replacedElements.includes(node.localName) ||
-      ((isWidgetInput || widgets.includes(node.localName)) &&
-        style.appearance !== "none")
-    // A fieldset lays its first legend out apart from its other children, at
-    // the legend's own width.
-    const isRenderedLegend =
-      node.parentElement?.localName === "fieldset" &&
-      node === node.parentElement.querySelector(":scope > legend")
-    if (drawsItself || isRenderedLegend) {
-      const element = isWidgetInput ? `input type=${node.type}` : node.localName
-      record(path, "element", element)
-    }
-    const value = node.value || node.placeholder
-    const showsValue =
-      ["input", "textarea", "select"].includes(node.localName) && !isWidgetInput
-    if (showsValue && value) {
-      record(path, "value", value)
-    }
-  }
-  const recordSvg = (svg, path) => {
-    const copies = [svg, svg].map((root) =>
-      shadow.appendChild(root.cloneNode(true))
-    )
-    // Paper writes flex-shrink: 0 on every svg it imports.
-    copies[1].style.flexShrink = "0"
-    const [live, copied] = [svg, copies[0]].map((root) => [
-      root,
-      ...root.querySelectorAll("*"),
-    ])
-    live.forEach((element, index) => {
-      const at = index === 0 ? path : `${path} > ${element.localName}`
-      const references = index === 0 ? copies : [copied[index]]
-      for (const [property, value] of dropped(element, references)) {
-        record(at, property, value)
-      }
-    })
-    for (const copy of copies) {
-      copy.remove()
-    }
-    if (svg.outerHTML.includes("currentColor")) {
-      record(path, "color", getComputedStyle(svg).color)
-    }
-  }
-
-  const paintsNothing = (style) =>
-    style.backgroundColor === "rgba(0, 0, 0, 0)" &&
-    style.backgroundImage === "none" &&
-    style.boxShadow === "none" &&
-    style.outlineStyle === "none" &&
-    ["top", "right", "bottom", "left"].every(
-      (side) =>
-        style.getPropertyValue(`border-${side}-style`) === "none" ||
-        parseFloat(style.getPropertyValue(`border-${side}-width`)) === 0
-    )
-  const recordAbsolute = (node, path, children, contextElement) => {
-    const { offsetParent } = node
-    if (offsetParent !== contextElement) {
-      record(
-        path,
-        "containing block",
-        offsetParent?.dataset.slot ?? offsetParent?.localName ?? "viewport"
-      )
-    }
-    if (children.length === 0 && paintsNothing(getComputedStyle(node))) {
-      record(path, "empty layer", "absolute")
-    }
-  }
-  const recordInlineBoxes = (node, children) => {
-    const boxes = children.filter((child) => "element" in child)
-    const measured = [node, ...boxes.map(({ element }) => element)]
-    for (const { element, path } of boxes) {
-      const { display } = getComputedStyle(element)
-      const layout = display.replace(/^inline-/, "")
-      const emittedDisplay = ["flex", "grid"].includes(layout)
-        ? layout
-        : "block"
-      const isLaidOutApart =
-        display.startsWith("inline") &&
-        bindsSize(element, "display", emittedDisplay, measured)
-      if (isLaidOutApart) {
-        record(path, "display", `${display} in a block`)
-      }
-    }
-  }
-
-  const visit = (node, parent) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      const text = node.data.replace(/\s+/g, " ")
-      return text.trim() ? [{ text }] : []
-    }
-    if (node.nodeType !== Node.ELEMENT_NODE) {
-      return []
-    }
-    const style = getComputedStyle(node)
-    const { display } = style
-    if (display === "none") {
-      return []
-    }
-    if (display === "contents") {
-      return [...node.childNodes].flatMap((child) => visit(child, parent))
-    }
-    const contextElement = parent?.element ?? frame.parentElement
-    if (node.localName === "svg") {
-      const path = `${parent.path} > svg`
-      enter(contextElement)
-      recordSvg(node, path)
-      const { width, height } = node.getBoundingClientRect()
-      return [
-        {
-          svg: node.outerHTML,
-          path,
-          size: { width: round(width), height: round(height) },
-        },
-      ]
-    }
-    const name = node.dataset.paperLayer ?? node.dataset.slot ?? null
-    const path = parent ? `${parent.path} > ${name ?? node.localName}` : name
-    const kind =
-      node === frame ? "frame" : node.dataset.paperLayer ? "chrome" : "slot"
-    const entry = { element: node, parent, name, kind, path }
-    const children = [...node.childNodes].flatMap((child) =>
-      visit(child, entry)
-    )
-    if (children.length === 1 && "text" in children[0]) {
-      children[0].text = children[0].text.trim()
-    }
-    const hasText = children.some((child) => "text" in child)
-    const hasElements = children.some((child) => !("text" in child))
-    if (hasText && hasElements) {
-      record(path, "children", "text and elements")
-    }
-    const isBlockFlow =
-      display === "block" || (display === "list-item" && !markerOf(style))
-    const hasSupportedLayout =
-      isBlockFlow || /^(inline-)?(flex|grid)$/.test(display)
-    if (hasElements && !hasSupportedLayout) {
-      record(path, "display", display)
-    }
-    if (isBlockFlow) {
-      recordInlineBoxes(node, children)
-    }
-    enter(contextElement)
-    recordDropped(node, path, hasText)
-    if (style.position === "absolute") {
-      recordAbsolute(node, path, children, contextElement)
-    }
-    Object.assign(entry, { hasText, children })
-    elements.push(entry)
-    return [entry]
-  }
-  const [tree] = visit(frame, null)
-
-  const read = () =>
-    elements.map(({ element, hasText }) => {
-      const style = getComputedStyle(element)
-      const properties = hasText
-        ? [...boxProperties, ...textProperties]
-        : boxProperties
-      const computed = element.computedStyleMap()
-      return Object.fromEntries(
-        properties.map((property) => [
-          property,
-          computedProperties.includes(property)
-            ? String(computed.get(property))
-            : style.getPropertyValue(property),
-        ])
-      )
-    })
-  const tokenValues = (element) => {
-    const style = getComputedStyle(element)
-    return tokens.map(({ name }) => style.getPropertyValue(name))
-  }
-  const readMarked = (sentinels, inspect) => {
-    for (const { name, value } of sentinels) {
-      frame.style.setProperty(name, value)
-    }
-    const values = read()
-    inspect?.()
-    for (const { name } of sentinels) {
-      frame.style.removeProperty(name)
-    }
-    return values
-  }
-  const readDirectTokenUses = (sentinels) => {
-    const pinned = elements.map(({ element }) => ({
-      element,
-      authored: element.getAttribute("style"),
-      fontSize: getComputedStyle(element).fontSize,
-    }))
-    for (const { element, fontSize } of pinned) {
-      element.style.setProperty("font-size", fontSize, "important")
-    }
-    const values = readMarked(sentinels)
-    for (const { element, authored } of pinned) {
-      if (authored === null) {
-        element.removeAttribute("style")
-      } else {
-        element.setAttribute("style", authored)
-      }
-    }
-    return values
-  }
-  const recordRedeclared = () => {
-    for (const { element, parent, path } of elements) {
-      if (!parent) {
-        continue
-      }
-      const [values, inherited] = [element, parent.element].map(tokenValues)
-      const redeclared = tokens
-        .filter((_, index) => values[index] !== inherited[index])
-        .map(({ name }) => name)
-      if (redeclared.length > 0) {
-        record(path, "tokens", redeclared.join(" "))
-      }
-    }
-  }
-
-  const real = read()
+  const real = bindings.read(elements)
   const rects = elements.map(({ element }) => element.getBoundingClientRect())
-  const marked = [
-    readMarked(first, recordRedeclared),
-    readMarked(second),
-    readDirectTokenUses(first),
-  ]
+  const marked = bindings.readMarked(elements, record)
 
-  const splitParts = (value) => {
-    const parts = []
-    let current = ""
-    let depth = 0
-    let isQuoted = false
-    for (const character of value) {
-      if (character === '"') {
-        isQuoted = !isQuoted
-      }
-      if (depth === 0 && !isQuoted && /[\s,]/.test(character)) {
-        if (current) {
-          parts.push(current)
-        }
-        if (character === ",") {
-          parts.push(",")
-        }
-        current = ""
-        continue
-      }
-      if (character === "(") {
-        depth++
-      }
-      if (character === ")") {
-        depth--
-      }
-      current += character
-    }
-    return current ? [...parts, current] : parts
-  }
-  const joinParts = (parts) => parts.join(" ").replaceAll(" ,", ",")
-
-  const decide = (real, [markedFirst, markedSecond, markedDirect]) => {
-    if (real === markedFirst && real === markedSecond) {
-      return { value: real, tokens: [] }
-    }
-    const [realParts, firstParts, secondParts, directParts] = [
-      real,
-      markedFirst,
-      markedSecond,
-      markedDirect,
-    ].map(splitParts)
-    const boundAt = (index, realPart) => {
-      const name = firstNames.get(firstParts[index])
-      const isBound =
-        name &&
-        secondNames.get(secondParts[index]) === name &&
-        resolvedTokens.get(name) === realPart
-      return isBound ? name : null
-    }
-    const isAligned =
-      realParts.length === firstParts.length &&
-      secondParts.length === firstParts.length
-    if (!isAligned) {
-      const name = firstParts.length === 1 && boundAt(0, real)
-      return name
-        ? { value: `var(${name})`, tokens: [name] }
-        : {
-            value: real,
-            tokens: [],
-            unbound: markedDirect !== real,
-          }
-    }
-    const found = []
-    let unbound = false
-    const parts = realParts.map((part, index) => {
-      const name = boundAt(index, part)
-      if (name) {
-        found.push(name)
-        return `var(${name})`
-      }
-      const dependsOnToken =
-        firstParts[index] !== part || secondParts[index] !== part
-      if (dependsOnToken && directParts[index] !== part) {
-        unbound = true
-      }
-      return part
-    })
-    return { value: joinParts(parts), tokens: found, unbound }
-  }
-
-  const usedLineHeight = (element) => {
-    const style = getComputedStyle(element)
-    const line = frame.appendChild(document.createElement("div"))
-    line.style.cssText = "position: absolute; line-height: normal"
-    for (const property of [
-      "font-family",
-      "font-size",
-      "font-style",
-      "font-weight",
-      "font-stretch",
-    ]) {
-      line.style.setProperty(property, style.getPropertyValue(property))
-    }
-    line.textContent = "x"
-    const { height } = line.getBoundingClientRect()
-    line.remove()
-    return `${round(height)}px`
-  }
-
-  // Chromium floors a length to 1/64 px and prints six significant digits.
-  // Paper keeps three decimals, so the length is rounded up to three.
-  const usedLength = (style, property) => {
-    const sixtyFourths = Math.round(
-      parseFloat(style.getPropertyValue(property)) * 64
-    )
-    return `${Math.ceil(sixtyFourths * 15.625) / 1000}px`
-  }
-  // Paper moves an absolute layer to where it paints among its siblings, which
-  // moves a box placed at its static position.
-  const pinStaticPosition = ({ element, styles }) => {
-    const style = getComputedStyle(element)
-    for (const [start, end] of [
-      ["left", "right"],
-      ["top", "bottom"],
-    ]) {
-      if (styles[start].value === "auto" && styles[end].value === "auto") {
-        styles[start] = { value: usedLength(style, start), tokens: [] }
-      }
-    }
-  }
-
-  // Paper rounds a percentage width or height to a whole pixel, and wraps text
-  // anywhere, which shrinks a min-content size to one character.
-  const pinUsedSize = ({ element, styles }) => {
-    const style = getComputedStyle(element)
-    for (const property of ["width", "height"]) {
-      const { value } = styles[property]
-      const used = usedLength(style, property)
-      const isRounded =
-        value.endsWith("%") &&
-        value !== "100%" &&
-        !Number.isInteger(parseFloat(used))
-      if (isRounded || value === "min-content") {
-        styles[property] = { value: used, tokens: [] }
-      }
-    }
-  }
-
+  const { usedLineHeight, pinStaticPosition, pinUsedSize } = createUsedValues({
+    frame,
+    round,
+  })
   const colorPattern = new RegExp(colorSource, "g")
   const colors = {}
   elements.forEach((entry, index) => {
     entry.styles = {}
     for (const property of Object.keys(real[index])) {
-      const decided = decide(
+      const decided = bindings.decide(
         real[index][property],
         marked.map((values) => values[index][property])
       )
@@ -679,7 +214,7 @@ const readFrame = ({
     delete entry.parent
   })
   probe.remove()
-  host.remove()
+  comparison.remove()
   return { tree, colors, unsupported }
 }
 
@@ -689,6 +224,9 @@ const escapeAttribute = (text) => escapeText(text).replace(/"/g, "&quot;")
 
 const flattenFrame = async (page, tokens) => {
   const { tree, colors, unsupported } = await page.evaluate(readFrame, {
+    sources: Object.fromEntries(
+      Object.entries(pageFunctions).map(([name, fn]) => [name, String(fn)])
+    ),
     tokens,
     boxProperties,
     computedProperties,
@@ -700,8 +238,6 @@ const flattenFrame = async (page, tokens) => {
     widgets,
     widgetInputs,
     colorSource: colorPattern.source,
-    markerSource: String(markerOf),
-    heldBackgroundSource: String(isHeldBackground),
     sizeConstraints,
     insets: sides,
     harmlessSources: harmlessValues.map(([property, pattern]) => [
