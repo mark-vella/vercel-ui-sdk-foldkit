@@ -117,9 +117,11 @@ const mountExample = (page, { script, mount }) =>
 
 const waitUntilSettled = async () => {
   await document.fonts.ready
-  const twoFrames = () =>
+  const twoRenderedFrames = () =>
     new Promise((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(resolve))
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => setTimeout(resolve))
+      )
     )
   let hasChanged = true
   const observer = new MutationObserver(() => {
@@ -133,7 +135,7 @@ const waitUntilSettled = async () => {
   })
   for (let attempt = 0; hasChanged && attempt < 60; attempt++) {
     hasChanged = false
-    await twoFrames()
+    await twoRenderedFrames()
   }
   observer.disconnect()
   return !hasChanged
@@ -181,6 +183,7 @@ const saveCapture = async (base, { name, commit, sources }, flat) => {
     ...commit,
     sources,
     hash: createHash("sha256").update(flat.html).digest("hex"),
+    settled: flat.isSettled,
     frame: flat.frame,
     layers: flat.layers,
     bindings: flat.bindings,
@@ -198,7 +201,7 @@ const captureExample = async (
   browser,
   { name, example, tokens, commit, outFolder, inspect }
 ) => {
-  const { inspection, isSettled, ...flat } = await captureFrame(browser, {
+  const { inspection, ...flat } = await captureFrame(browser, {
     name,
     root: built,
     stylesheets: example.stylesheets,
@@ -211,7 +214,7 @@ const captureExample = async (
     { name, commit, sources: example.sources },
     flat
   )
-  return { name, sidecar, html: flat.html, inspection, isSettled }
+  return { name, sidecar, html: flat.html, inspection }
 }
 
 const captureExamples = async function* (
@@ -259,8 +262,9 @@ if (import.meta.main) {
         continue
       }
       const { width, height } = sidecar.frame
+      const unsettled = sidecar.settled ? "" : ", still changing at capture"
       console.log(
-        `${name}: ${width}x${height}, ${sidecar.layers.length} layers, ${sidecar.bindings.length} bindings, ${sidecar.unbound.length} unbound, ${sidecar.unsupported.length} unsupported, ${sidecar.hash.slice(0, 12)}`
+        `${name}: ${width}x${height}, ${sidecar.layers.length} layers, ${sidecar.bindings.length} bindings, ${sidecar.unbound.length} unbound, ${sidecar.unsupported.length} unsupported, ${sidecar.hash.slice(0, 12)}${unsettled}`
       )
     }
   } finally {

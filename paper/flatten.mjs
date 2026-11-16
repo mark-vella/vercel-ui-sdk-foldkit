@@ -22,6 +22,15 @@ const widgets = ["select", "progress", "meter"]
 const widgetInputs = ["checkbox", "radio", "range", "color", "file", "image"]
 const colorPattern =
   /\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^()]*\)/g
+const markerOf = ({ display, listStyleImage, listStyleType }) => {
+  if (!display.includes("list-item")) {
+    return null
+  }
+  if (listStyleImage !== "none") {
+    return listStyleImage
+  }
+  return listStyleType === "none" ? null : listStyleType
+}
 
 const readFrame = ({
   tokens,
@@ -34,7 +43,9 @@ const readFrame = ({
   widgets,
   widgetInputs,
   colorSource,
+  markerSource,
 }) => {
+  const markerOf = new Function(`return ${markerSource}`)()
   const frame = document.querySelector("[data-example]")
   const probe = document.head.appendChild(document.createElement("div"))
   const longhands = (property) => {
@@ -198,15 +209,6 @@ const readFrame = ({
   // which never carries it.
   const isEmittedBy = (hasText) => (property) =>
     emitted.has(property) && (hasText || property !== "text-decoration-line")
-  const markerOf = ({ display, listStyleImage, listStyleType }) => {
-    if (!display.includes("list-item")) {
-      return null
-    }
-    if (listStyleImage !== "none") {
-      return listStyleImage
-    }
-    return listStyleType === "none" ? null : listStyleType
-  }
   const recordDropped = (node, path, hasText) => {
     for (const [property, value] of dropped(
       node,
@@ -531,6 +533,7 @@ const flattenFrame = async (page, tokens) => {
     widgets,
     widgetInputs,
     colorSource: colorPattern.source,
+    markerSource: String(markerOf),
   })
   const layers = []
   const bindings = []
@@ -590,4 +593,4 @@ const flattenFrame = async (page, tokens) => {
   }
 }
 
-export { flattenFrame }
+export { flattenFrame, markerOf }

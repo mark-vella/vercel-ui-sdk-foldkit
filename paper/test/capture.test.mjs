@@ -4,7 +4,12 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { after, before, describe, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { captureExamples, captureFrame, launchBrowser } from "../capture.mjs"
+import {
+  captureExamples,
+  captureFrame,
+  launchBrowser,
+  saveCapture,
+} from "../capture.mjs"
 import { readCodeTokens } from "../tokens.mjs"
 
 const repo = fileURLToPath(new URL("../..", import.meta.url))
@@ -97,6 +102,80 @@ describe("settling", () => {
       },
       { isSettled: true, height: 6 * 12 - 12 }
     )
+  })
+
+  test("waits out a change a resize observer makes in the last frame it checks", async () => {
+    const result = await captureFrame(browser, {
+      name: "fixture/case",
+      root: repo,
+      stylesheets: ["/examples/styles/tokens.css"],
+      mount: (page) =>
+        page.locator(".example-content").evaluate(async (preview) => {
+          await document.fonts.ready
+          const grow = (remaining) => {
+            if (remaining > 0) {
+              preview.append(document.createElement("div"))
+              requestAnimationFrame(() => grow(remaining - 1))
+            }
+          }
+          const observer = new ResizeObserver(() => {
+            observer.disconnect()
+            grow(6)
+          })
+          await new Promise((resolve) => {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => observer.observe(preview))
+              )
+              setTimeout(resolve)
+            })
+          })
+        }),
+      tokens,
+    })
+    assert.deepEqual(
+      {
+        isSettled: result.isSettled,
+        height: layer(result, "fixture/case > preview").height,
+      },
+      { isSettled: true, height: 6 * 12 - 12 }
+    )
+  })
+
+  test("records in the sidecar a capture that never settled", async () => {
+    const outFolder = await mkdtemp(path.join(tmpdir(), "paper-capture-"))
+    try {
+      const flat = await captureFrame(browser, {
+        name: "fixture/case",
+        root: repo,
+        stylesheets: ["/examples/styles/tokens.css"],
+        mount: (page) =>
+          page.locator(".example-content").evaluate((preview) => {
+            const tick = (count) => {
+              preview.dataset.tick = String(count)
+              requestAnimationFrame(() => tick(count + 1))
+            }
+            tick(0)
+          }),
+        tokens,
+      })
+      await saveCapture(
+        path.join(outFolder, "fixture/case"),
+        {
+          name: "fixture/case",
+          commit: { commit: "0".repeat(40), dirty: false },
+          sources: [],
+        },
+        flat
+      )
+      const saved = await readFile(
+        path.join(outFolder, "fixture/case.json"),
+        "utf8"
+      )
+      assert.equal(JSON.parse(saved).settled, false)
+    } finally {
+      await rm(outFolder, { recursive: true })
+    }
   })
 })
 

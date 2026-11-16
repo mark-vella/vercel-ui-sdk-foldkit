@@ -4,12 +4,14 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
 import { captureExamples, launchBrowser, readCommit } from "./capture.mjs"
+import { markerOf } from "./flatten.mjs"
 import { checkEmitted } from "./roundtrip.mjs"
 import { readCodeTokens } from "./tokens.mjs"
 
 const repo = fileURLToPath(new URL("..", import.meta.url))
 const censusFile = path.join(repo, "paper/out/census.json")
 const docsPages = "apps/docs/content/docs/web-components/components/*.mdx"
+const largeFrameLayers = 1000
 
 const listExamples = async () => {
   const names = []
@@ -22,19 +24,25 @@ const listExamples = async () => {
   return names.toSorted()
 }
 
+const captionsIn = (page) =>
+  [...page.matchAll(/<ComponentExample\b(?:[^>"]|"[^"]*")*>/g)].map(([tag]) => [
+    tag.match(/\bname="([^"]*)"/)[1],
+    tag.match(/\bcaption="([^"]*)"/)?.[1] ?? null,
+  ])
+
 const readDocsCaptions = async () => {
   const captions = new Map()
   for await (const file of glob(docsPages, { cwd: repo })) {
     const page = await readFile(path.join(repo, file), "utf8")
-    for (const [tag] of page.matchAll(/<ComponentExample\b[\s\S]*?>/g)) {
-      const name = tag.match(/\bname="([^"]*)"/)[1]
-      captions.set(name, tag.match(/\bcaption="([^"]*)"/)?.[1] ?? null)
+    for (const [name, caption] of captionsIn(page)) {
+      captions.set(name, caption)
     }
   }
   return captions
 }
 
-const inspectPreview = () => {
+const inspectPreview = (markerSource) => {
+  const markerOf = new Function(`return ${markerSource}`)()
   const preview = document.querySelector('[data-paper-layer="preview"]')
   const kinds = {}
   const count = (kind) => {
@@ -52,8 +60,14 @@ const inspectPreview = () => {
     }
     return false
   }
+  const popups =
+    globalThis[Symbol.for("ui-sdk.popup-elements@1")] ?? new WeakMap()
+  const isPopup = (element) =>
+    popups.has(element) ||
+    [...element.querySelectorAll("*")].some((inner) => popups.has(inner))
   const slots = {}
   const closedSlots = new Set()
+  const closedPopups = new Set()
   for (const element of preview.querySelectorAll("[data-slot]")) {
     const { slot } = element.dataset
     const states = new Set(slots[slot])
@@ -65,7 +79,12 @@ const inspectPreview = () => {
     slots[slot] = [...states].toSorted()
     if (isHidden(element) && !isInHiddenSubtree(element)) {
       closedSlots.add(slot)
-      count("closed slot")
+      if (isPopup(element)) {
+        closedPopups.add(slot)
+        count("closed popup")
+      } else {
+        count("hidden part")
+      }
     }
   }
 
@@ -152,9 +171,7 @@ const inspectPreview = () => {
     const { children, styledTexts, hasText } = layoutOf(element)
     const isBlockFlow =
       style.display === "block" ||
-      (style.display === "list-item" &&
-        style.listStyleType === "none" &&
-        style.listStyleImage === "none")
+      (style.display === "list-item" && !markerOf(style))
     if (isBlockFlow && children.length > 0) {
       count("block with element children")
       const isInline = (child) =>
@@ -208,8 +225,15 @@ const inspectPreview = () => {
   }
   layoutOf(preview).children.forEach(inspect)
 
-  return { slots, closedSlots: [...closedSlots].toSorted(), kinds }
+  return {
+    slots,
+    closedSlots: [...closedSlots].toSorted(),
+    closedPopups: [...closedPopups].toSorted(),
+    kinds,
+  }
 }
+
+const inspectExample = (page) => page.evaluate(inspectPreview, String(markerOf))
 
 const kindOf = ({ layer, property, value }) => {
   if (/ > svg( >|$)/.test(layer)) {
@@ -287,15 +311,15 @@ const sortKeys = (record) =>
     Object.entries(record).toSorted(([a], [b]) => a.localeCompare(b))
   )
 
-const describeExample = ({ sidecar, html, inspection, isSettled }, emitted) => {
+const describeExample = ({ sidecar, html, inspection }, offline) => {
   const preview = sidecar.layers.find(({ layer }) =>
     layer.endsWith(" > preview")
   )
-  const kinds = {
+  const recorded = {
     ...countRecorded(sidecar.unsupported, kindOf),
     ...countRecorded(sidecar.unbound, () => "unbound token"),
-    ...inspection.kinds,
   }
+  const kinds = { ...recorded, ...inspection.kinds }
   const svgs = sidecar.layers.filter(({ kind }) => kind === "svg").length
   if (svgs > 0) {
     kinds.svg = svgs
@@ -303,11 +327,14 @@ const describeExample = ({ sidecar, html, inspection, isSettled }, emitted) => {
   if (preview.width === 0 || preview.height === 0) {
     kinds["empty preview"] = 1
   }
-  if (!isSettled) {
+  if (!sidecar.settled) {
     kinds["still changing at capture"] = 1
   }
-  if (emitted.length > 0) {
-    kinds["emitted HTML differs offline"] = emitted.length
+  if (offline.error) {
+    kinds["offline check failed"] = 1
+  }
+  if (offline.emitted.length > 0) {
+    kinds["emitted HTML differs offline"] = offline.emitted.length
   }
   return {
     status: "rendered",
@@ -317,10 +344,13 @@ const describeExample = ({ sidecar, html, inspection, isSettled }, emitted) => {
     hash: sidecar.hash,
     slots: sortKeys(inspection.slots),
     closedSlots: inspection.closedSlots,
+    closedPopups: inspection.closedPopups,
     kinds: sortKeys(kinds),
+    recorded: Object.keys(recorded).toSorted(),
     unsupported: sidecar.unsupported.length,
     unbound: sidecar.unbound.length,
-    emitted,
+    emitted: offline.emitted,
+    offlineError: offline.error ?? null,
   }
 }
 
@@ -331,7 +361,7 @@ const runCensus = async (names) => {
   const browser = await launchBrowser()
   try {
     const results = captureExamples(browser, names, {
-      inspect: (page) => page.evaluate(inspectPreview),
+      inspect: inspectExample,
     })
     for await (const result of results) {
       const component = result.name.split("/")[0]
@@ -346,10 +376,11 @@ const runCensus = async (names) => {
         console.error(`${result.name}: failed, ${result.error}`)
         continue
       }
-      const emitted = await checkEmitted(browser, { ...result, tokens }).catch(
-        (error) => [`the offline check failed, ${error.message.split("\n")[0]}`]
+      const offline = await checkEmitted(browser, { ...result, tokens }).then(
+        (emitted) => ({ emitted }),
+        (error) => ({ emitted: [], error: error.message.split("\n")[0] })
       )
-      entries.push({ ...entry, ...describeExample(result, emitted) })
+      entries.push({ ...entry, ...describeExample(result, offline) })
       process.stderr.write(`\r${entries.length}/${names.length}`)
     }
   } finally {
@@ -381,20 +412,56 @@ const deferredFindings = [
 ]
 
 const tallyKinds = (rendered, matches) => {
-  const tally = { examples: 0, elements: 0, components: new Set() }
-  for (const { component, kinds } of rendered) {
+  const tally = {
+    examples: 0,
+    elements: 0,
+    differsOffline: 0,
+    onlyRecorded: 0,
+    components: new Set(),
+  }
+  for (const { component, kinds, recorded, layers } of rendered) {
     const found = Object.entries(kinds).filter(([kind]) => matches(kind))
-    if (found.length > 0) {
-      tally.examples++
-      tally.elements += found.reduce((sum, [, elements]) => sum + elements, 0)
-      tally.components.add(component)
+    if (found.length === 0) {
+      continue
     }
+    tally.examples++
+    if (layers <= largeFrameLayers) {
+      tally.elements += found.reduce((sum, [, elements]) => sum + elements, 0)
+    }
+    if (kinds["emitted HTML differs offline"]) {
+      tally.differsOffline++
+    }
+    if (recorded.length > 0 && recorded.every(matches)) {
+      tally.onlyRecorded++
+    }
+    tally.components.add(component)
   }
   return tally
 }
 
-const formatTally = (label, { examples, elements, components }) =>
-  `${label} | ${examples} | ${elements} | ${components.size}: ${[...components].join(", ")}`
+const formatTally = (
+  label,
+  { examples, elements, differsOffline, onlyRecorded, components }
+) =>
+  `${label} | ${examples} | ${elements} | ${differsOffline} | ${onlyRecorded} | ${components.size}: ${[...components].join(", ")}`
+
+const effectColumns = "differs offline | only recorded loss"
+const notes = [
+  "notes",
+  `- elements leave out frames over ${largeFrameLayers} layers, named above.`,
+  "- elements is a lower bound where sibling layers share a path and record different longhands of one kind.",
+  "- differs offline: the frame has the kind, and its emitted HTML rendered offline differs in a size, a binding or a colour. A lost control value, text or layer position can't show there.",
+  "- only recorded loss: every loss the sidecar records in the frame is under this row. A kind the census detects itself is never a recorded loss.",
+  "- display <value> counts containers with element children. A table cell or grid that holds only text is not counted.",
+  "- closed popup: a hidden slot that is or holds a ui-sdk popup's content. hidden part: any other hidden slot, such as a panel, an indicator or a backdrop.",
+  "- a deferred finding's entries add up the elements of each kind it matches, so an svg under both svg kinds counts twice.",
+  "",
+  "not counted",
+  "- layer positions, which nothing compares yet",
+  "- max() and averaged tokens that bind the wrong token",
+  "- a font-size token used in another property",
+  "- em, rem and vw sizes, which compute to px; only % and CSS functions are counted",
+]
 
 const summarize = ({ examples }) => {
   const rendered = examples.filter(({ status }) => status === "rendered")
@@ -412,15 +479,24 @@ const summarize = ({ examples }) => {
       .slice(0, 5)
       .map(({ name, layers }) => `${name} ${layers}`)
       .join(", ")}`,
+    `over ${largeFrameLayers} layers ${
+      rendered
+        .filter(({ layers }) => layers > largeFrameLayers)
+        .map(({ name }) => name)
+        .join(", ") || "none"
+    }`,
     "",
-    "kind | examples | elements | components",
+    `kind | examples | elements | ${effectColumns} | components`,
   ]
   const kinds = new Set(rendered.flatMap(({ kinds }) => Object.keys(kinds)))
   const ranked = [...kinds]
     .map((kind) => [kind, tallyKinds(rendered, (name) => name === kind)])
     .toSorted(([a, x], [b, y]) => y.examples - x.examples || a.localeCompare(b))
   lines.push(...ranked.map(([kind, tally]) => formatTally(kind, tally)))
-  lines.push("", "deferred finding | examples | elements | components")
+  lines.push(
+    "",
+    `deferred finding | examples | entries | ${effectColumns} | components`
+  )
   for (const [label, pattern] of deferredFindings) {
     lines.push(
       formatTally(
@@ -429,6 +505,7 @@ const summarize = ({ examples }) => {
       )
     )
   }
+  lines.push("", ...notes)
   return lines.join("\n")
 }
 
@@ -448,4 +525,4 @@ if (import.meta.main) {
   }
 }
 
-export { inspectPreview }
+export { captionsIn, describeExample, inspectExample, summarize }
