@@ -461,6 +461,29 @@ describe("backgrounds", () => {
     )
   })
 
+  test("of gradients in another space are emitted, and recorded where Paper interpolates them in oklab", async () => {
+    const result = await capture(
+      `<div data-slot="fade" style="width: 120px; height: 20px; background-image: linear-gradient(to right, red, blue)"></div><div data-slot="linear" style="width: 120px; height: 20px; background-image: linear-gradient(in srgb-linear, red, blue), radial-gradient(in oklab, red, blue)"></div><div data-slot="sized" style="width: 120px; height: 20px; background-image: linear-gradient(to right, red, blue); background-size: 50% 100%"></div><div data-slot="solid" style="width: 120px; height: 20px; background-image: linear-gradient(red, red), linear-gradient(in oklab, red, blue)"></div>`
+    )
+    assert.deepEqual(
+      {
+        fade: styleOf(result, "fade"),
+        unsupported: result.unsupported,
+      },
+      {
+        fade: "flex-shrink: 1; width: 120px; height: 20px; background-image: linear-gradient(to right, rgb(255 0 0), rgb(0 0 255)); background-size: auto; background-position: 0% 0%; background-repeat: repeat",
+        unsupported: [
+          { layer: layerPath("fade"), property: "gradient", value: "in srgb" },
+          {
+            layer: layerPath("linear"),
+            property: "gradient",
+            value: "in srgb-linear",
+          },
+        ],
+      }
+    )
+  })
+
   test("that Paper turns into a colour are recorded", async () => {
     const result = await capture(
       `<div data-slot="rule" style="width: 120px; height: 20px; background-image: linear-gradient(var(--line), var(--line)); background-size: 100% 1px; background-repeat: no-repeat"></div>`

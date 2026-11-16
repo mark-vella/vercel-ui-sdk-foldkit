@@ -180,6 +180,12 @@ const createComparison = ({
       getComputedStyle(reference)
     )
     const ownDefaults = tagDefaults[node.localName] ?? []
+    const isUnpaintedBorder = (property) => {
+      const side = property.match(/^border-(\w+)-style$/)?.[1]
+      return (
+        side && parseFloat(style.getPropertyValue(`border-${side}-width`)) === 0
+      )
+    }
     return compared.flatMap((property) => {
       // getComputedStyle resolves an auto inset of a positioned element to
       // the length it lands at, which moves nothing.
@@ -189,13 +195,14 @@ const createComparison = ({
       const isHarmless =
         isEmitted(property, style, node) ||
         ownDefaults.includes(property) ||
+        isUnpaintedBorder(property) ||
         (property === "vertical-align" &&
           !/^(inline|table-cell)/.test(style.display)) ||
         harmlessValues.get(property)?.test(value) ||
         referenceStyles.some(
           (reference) => reference.getPropertyValue(property) === value
         ) ||
-        (constraints.includes(property) &&
+        ((constraints.includes(property) || property === "box-sizing") &&
           !bindsSize(
             node,
             property,

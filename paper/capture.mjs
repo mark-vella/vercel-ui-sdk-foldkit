@@ -7,6 +7,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
 import { flattenFrame } from "./flatten.mjs"
+import { comparePictures, innermostLayer, readLayerBoxes } from "./pictures.mjs"
 import { readCodeTokens } from "./tokens.mjs"
 
 const usage = "Usage: node paper/capture.mjs <component/example>..."
@@ -92,6 +93,8 @@ const pageHtml = (name, stylesheets) => `<!doctype html>
 :root { color-scheme: light; --font-geist-mono: "Geist Mono"; --lightningcss-light: initial; --lightningcss-dark: ; }
 body { display: grid; justify-content: start; font-family: Geist; }
 ${noMotion}
+/* Chromium antialiases a scroller's content differently when it sets overscroll-behavior. */
+* { overscroll-behavior: auto !important; }
 @layer utilities {
   .example-content { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; width: ${docsContentWidth}; }
 }
@@ -251,6 +254,57 @@ const captureFrame = async (
   }
 }
 
+const mountEmitted = (html) => {
+  const template = document.createElement("template")
+  template.innerHTML = html
+  for (const element of template.content.querySelectorAll("[layer-name]")) {
+    element.dataset.paperLayer = element.getAttribute("layer-name")
+  }
+  for (const element of template.content.querySelectorAll("div")) {
+    element.style.boxSizing = "border-box"
+  }
+  for (const svg of template.content.querySelectorAll("svg")) {
+    svg.style.flexShrink = "0"
+  }
+  const root = template.content.firstElementChild
+  root.dataset.example = ""
+  document.querySelector("[data-example]").replaceWith(root)
+}
+
+const renderEmitted = (browser, { name, html, tokens, inspect }) =>
+  captureFrame(browser, {
+    name,
+    root: repo,
+    stylesheets: ["/examples/styles/tokens.css"],
+    mount: (page) => page.evaluate(mountEmitted, html),
+    tokens,
+    inspect,
+  })
+
+const captureCompared = async (browser, options) => {
+  const flat = await captureFrame(browser, options)
+  const emitted = await renderEmitted(browser, {
+    name: options.name,
+    html: flat.html,
+    tokens: options.tokens,
+    inspect: (page) => page.evaluate(readLayerBoxes),
+  })
+  const region = await comparePictures(browser, {
+    expected: flat.png,
+    actual: emitted.png,
+    frameWidth: flat.frame.width,
+  })
+  if (region) {
+    const { left, top, width, height } = region
+    flat.unsupported.push({
+      layer: innermostLayer(region, emitted.inspection),
+      property: "picture",
+      value: `${width}x${height} at ${left},${top}`,
+    })
+  }
+  return { ...flat, emitted }
+}
+
 const readCommit = () => {
   const git = (...args) =>
     execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim()
@@ -285,7 +339,7 @@ const captureExample = async (
   browser,
   { name, example, tokens, commit, outFolder, inspect }
 ) => {
-  const { inspection, ...flat } = await captureFrame(browser, {
+  const { inspection, emitted, ...flat } = await captureCompared(browser, {
     name,
     root: built,
     stylesheets: example.stylesheets,
@@ -298,7 +352,7 @@ const captureExample = async (
     { name, commit, sources: example.sources },
     flat
   )
-  return { name, sidecar, html: flat.html, inspection }
+  return { name, sidecar, html: flat.html, inspection, emitted }
 }
 
 const captureExamples = async function* (
@@ -358,11 +412,13 @@ if (import.meta.main) {
 
 export {
   blockOtherOrigins,
+  captureCompared,
   captureExamples,
   captureFrame,
   launchBrowser,
   noMotion,
   pageOptions,
   readCommit,
+  renderEmitted,
   saveCapture,
 }

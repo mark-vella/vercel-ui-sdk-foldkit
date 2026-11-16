@@ -5,6 +5,7 @@ const createRecords = ({
   movesOrTurnsSource,
   backgroundLonghands,
   isHeldBackground,
+  rewrittenGradientSpaces,
   markerOf,
   replacedElements,
   widgets,
@@ -64,6 +65,10 @@ const createRecords = ({
       }
     }
     const style = getComputedStyle(node)
+    const rewrittenSpaces = rewrittenGradientSpaces(style)
+    if (rewrittenSpaces.length > 0 && isHeldBackground(style)) {
+      record(path, "gradient", `in ${rewrittenSpaces.join(", in ")}`)
+    }
     const marker = markerOf(style)
     if (marker) {
       record(path, "::marker", marker)

@@ -456,9 +456,9 @@ const notes = [
   "- closed popup: a hidden slot that is or holds a ui-sdk popup's content. hidden part: any other hidden slot, such as a panel, an indicator or a backdrop.",
   "- a deferred finding's entries add up the elements of each kind it matches, so an svg under both svg kinds counts twice.",
   "- every frame with svg styled by CSS also has svg currentColor. Each reads 0 in only recorded loss, and the deferred svg row counts them together.",
+  "- picture: the emitted HTML's picture differs from the example's. It is recorded once a frame, on the innermost layer that holds every changed pixel.",
   "",
   "not counted",
-  "- layer positions, which nothing compares yet",
   "- em, rem and vw sizes, which compute to px; only % and CSS functions are counted",
 ]
 

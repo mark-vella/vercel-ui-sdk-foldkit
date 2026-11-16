@@ -1,5 +1,6 @@
 import {
   isHeldBackground,
+  rewrittenGradientSpaces,
   toDeclarations,
   toPaperOrder,
 } from "./declarations.mjs"
@@ -120,6 +121,7 @@ const readFrame = (
       movesOrTurnsSource,
       backgroundLonghands,
       isHeldBackground: helpers.isHeldBackground,
+      rewrittenGradientSpaces: helpers.rewrittenGradientSpaces,
       markerOf: helpers.markerOf,
       replacedElements,
       widgets,
@@ -189,6 +191,7 @@ const readFrame = (
 const pageFunctions = {
   markerOf,
   isHeldBackground,
+  rewrittenGradientSpaces,
   createBindings,
   createComparison,
   createRecords,

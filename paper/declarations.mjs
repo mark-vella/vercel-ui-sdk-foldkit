@@ -98,6 +98,31 @@ const isHeldBackground = ({ backgroundImage, backgroundRepeat }) => {
   )
 }
 
+// Paper interpolates a gradient in oklab whatever space it asks for, unless a
+// layer is sized or placed: then it keeps the background as written.
+const rewrittenGradientSpaces = ({
+  backgroundImage,
+  backgroundSize,
+  backgroundPosition,
+}) => {
+  const isPlaced =
+    backgroundSize
+      .split(", ")
+      .some((size) => !["auto", "100% 100%"].includes(size)) ||
+    backgroundPosition.split(", ").some((position) => position !== "0% 0%")
+  if (isPlaced) {
+    return []
+  }
+  const blended = backgroundImage.replace(
+    /linear-gradient\((rgba?\([^()]*\)), \1\)/g,
+    ""
+  )
+  const spaces = [...blended.matchAll(/gradient\(([^,]*)/g)].map(
+    ([, first]) => first.match(/\bin ([\w-]+)/)?.[1] ?? "srgb"
+  )
+  return [...new Set(spaces)].filter((space) => space !== "oklab")
+}
+
 const compressSides = (values) => {
   const [top, right, bottom, left] = values
   if (values.every((value) => value === top)) {
@@ -313,4 +338,9 @@ const toPaperOrder = (children) => {
   ]
 }
 
-export { isHeldBackground, toDeclarations, toPaperOrder }
+export {
+  isHeldBackground,
+  rewrittenGradientSpaces,
+  toDeclarations,
+  toPaperOrder,
+}

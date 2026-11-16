@@ -5,6 +5,7 @@ import path from "node:path"
 import { after, before, describe, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import {
+  captureCompared,
   captureExamples,
   captureFrame,
   launchBrowser,
@@ -39,14 +40,6 @@ const capture = (html) =>
 
 const elementTag = ({ html }, slot) =>
   html.match(new RegExp(`<div layer-name="${slot}"[^>]*>`))?.[0]
-
-const preflightOnSvg = [
-  "border-bottom-style",
-  "border-left-style",
-  "border-right-style",
-  "border-top-style",
-  "box-sizing",
-]
 
 const layer = ({ layers }, path) => layers.find((entry) => entry.layer === path)
 
@@ -613,10 +606,44 @@ describe("what the flattener does not emit", () => {
       `<style>[data-slot="x"] svg { width: 16px; height: 16px }</style><div data-slot="x" style="display: flex; color: var(--danger)"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M0 0h24v24H0z" fill="currentColor"/></svg></div>`
     )
     assert.deepEqual(unsupportedAt(result, `${layerPath("x")} > svg`), [
-      ...preflightOnSvg,
       "color",
       "height",
       "width",
+    ])
+  })
+
+  test("records nothing for the zero-width border and the box sizing the base styles give an svg", async () => {
+    const result = await capture(
+      `<div data-slot="x" style="display: flex"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M0 0h24v24H0z"/></svg></div>`
+    )
+    assert.deepEqual(result.unsupported, [])
+  })
+
+  test("records a border that CSS paints on an svg", async () => {
+    const result = await capture(
+      `<style>[data-slot="x"] svg { border-top: 2px solid red }</style><div data-slot="x" style="display: flex"><svg width="24" height="24" viewBox="0 0 24 24"></svg></div>`
+    )
+    assert.deepEqual(result.unsupported, [
+      {
+        layer: `${layerPath("x")} > svg`,
+        property: "border-top-color",
+        value: "rgb(255, 0, 0)",
+      },
+      {
+        layer: `${layerPath("x")} > svg`,
+        property: "border-top-style",
+        value: "solid",
+      },
+      {
+        layer: `${layerPath("x")} > svg`,
+        property: "border-top-width",
+        value: "2px",
+      },
+      {
+        layer: `${layerPath("x")} > svg`,
+        property: "box-sizing",
+        value: "border-box",
+      },
     ])
   })
 
@@ -648,17 +675,12 @@ describe("what the flattener does not emit", () => {
     const result = await capture(
       `<style>[data-slot="x"] path { stroke: var(--danger) }</style><div data-slot="x" style="display: flex"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M0 0h24v24H0z" fill="none" stroke="black"/></svg></div>`
     )
-    const svg = `${layerPath("x")} > svg`
-    const preflight = (layer) =>
-      preflightOnSvg.map((property) => ({
-        layer,
-        property,
-        value: property === "box-sizing" ? "border-box" : "solid",
-      }))
     assert.deepEqual(result.unsupported, [
-      ...preflight(svg),
-      ...preflight(`${svg} > path`),
-      { layer: `${svg} > path`, property: "stroke", value: "rgb(214, 0, 32)" },
+      {
+        layer: `${layerPath("x")} > svg > path`,
+        property: "stroke",
+        value: "rgb(214, 0, 32)",
+      },
     ])
   })
 
@@ -848,6 +870,35 @@ describe("what the flattener does not emit", () => {
     const result = await capture(
       `<div data-slot="x" style="display: flex; padding: var(--space-2); background-color: var(--paper)">Text</div>`
     )
+    assert.deepEqual(result.unsupported, [])
+  })
+})
+
+describe("the picture of the emitted HTML", () => {
+  const turned = (origin) =>
+    `<div data-slot="holder" style="display: flex; flex-direction: column; width: 20px; height: 40px"><div data-slot="bar" style="width: 20px; height: 10px; background-color: var(--ink); rotate: 180deg; transform-origin: ${origin}"></div></div>`
+  const captureTurned = (origin) =>
+    captureCompared(browser, {
+      name: "fixture/case",
+      root: repo,
+      stylesheets: ["/examples/styles/tokens.css"],
+      mount: fill(turned(origin)),
+      tokens,
+    })
+
+  test("is recorded where it differs from the example, on the layer that holds the change", async () => {
+    const result = await captureTurned("10px 10px")
+    assert.deepEqual(result.unsupported, [
+      {
+        layer: "fixture/case > preview > holder",
+        property: "picture",
+        value: "20x20 at 24,54",
+      },
+    ])
+  })
+
+  test("records nothing where it is the example's picture", async () => {
+    const result = await captureTurned("center")
     assert.deepEqual(result.unsupported, [])
   })
 })
