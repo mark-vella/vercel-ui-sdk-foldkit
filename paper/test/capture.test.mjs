@@ -481,7 +481,39 @@ describe("what the flattener does not emit", () => {
       `<div data-slot="line"><span data-slot="x" style="display: inline-block; vertical-align: middle">Icon</span></div>`
     )
     assert.deepEqual(unsupportedAt(result, layerPath("line > x")), [
+      "display",
       "vertical-align",
+    ])
+  })
+
+  test("records content-box sizing only where border-box would change the box", async () => {
+    const result = await capture(
+      `<div data-slot="wide" style="width: 40px; height: 10px; padding-right: 8px"></div><div data-slot="tall" style="display: flex; min-height: 40px; padding: 4px"><div style="width: 8px; height: 8px"></div></div><div data-slot="plain" style="width: 40px; height: 10px"></div><div data-slot="padded" style="padding: 4px"><div style="width: 8px; height: 8px"></div></div>`
+    )
+    assert.deepEqual(result.unsupported, [
+      {
+        layer: layerPath("wide"),
+        property: "box-sizing",
+        value: "content-box",
+      },
+      {
+        layer: layerPath("tall"),
+        property: "box-sizing",
+        value: "content-box",
+      },
+    ])
+  })
+
+  test("records an inline child of a block only where a block would lay it out differently", async () => {
+    const result = await capture(
+      `<div data-slot="line" style="width: 200px"><span data-slot="time" style="line-height: 20px">Time</span></div><div data-slot="fits" style="line-height: 20px"><span data-slot="button" style="display: inline-flex">Go</span></div>`
+    )
+    assert.deepEqual(result.unsupported, [
+      {
+        layer: layerPath("line > time"),
+        property: "display",
+        value: "inline in a block",
+      },
     ])
   })
 

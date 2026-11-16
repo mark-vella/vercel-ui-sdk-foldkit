@@ -158,8 +158,15 @@ const readFrame = ({
       host.style.setProperty(property, isCurrentColor ? "currentcolor" : value)
     }
   }
-  const bindsSize = (node, property, value) => {
-    const before = node.getBoundingClientRect()
+  const bindsSize = (node, property, value, measured = [node]) => {
+    const sizes = () =>
+      measured
+        .map((element) => {
+          const { width, height } = element.getBoundingClientRect()
+          return `${width}x${height}`
+        })
+        .join()
+    const before = sizes()
     const authored = node.getAttribute("style")
     // Chromium writes CSSOM edits back to the attribute lazily, which leaves
     // style="" in an svg's outerHTML after removeAttribute.
@@ -167,13 +174,13 @@ const readFrame = ({
       "style",
       `${authored ?? ""}; ${property}: ${value} !important`
     )
-    const after = node.getBoundingClientRect()
+    const after = sizes()
     if (authored === null) {
       node.removeAttribute("style")
     } else {
       node.setAttribute("style", authored)
     }
-    return before.width !== after.width || before.height !== after.height
+    return before !== after
   }
   const dropped = (node, references, isEmitted = () => false) => {
     const style = getComputedStyle(node)
@@ -208,21 +215,6 @@ const readFrame = ({
       return isHarmless ? [] : [[property, value]]
     })
   }
-  const hasContentBoxEdges = (style, property) => {
-    const edges = property.endsWith("width")
-      ? ["left", "right"]
-      : ["top", "bottom"]
-    return (
-      style.boxSizing === "content-box" &&
-      edges.some(
-        (side) =>
-          parseFloat(style.getPropertyValue(`padding-${side}`)) > 0 ||
-          parseFloat(style.getPropertyValue(`border-${side}-width`)) > 0
-      )
-    )
-  }
-  // text-decoration-line does not inherit: it paints across the text inside,
-  // which never carries it.
   const movesOrTurns = new RegExp(movesOrTurnsSource)
   const scrolls = (node, property) => {
     const value = getComputedStyle(node).getPropertyValue(property)
@@ -240,10 +232,9 @@ const readFrame = ({
       property.startsWith("text-decoration-") ||
       property === "text-underline-offset"
     ) {
+      // text-decoration-line does not inherit: it paints across the text
+      // inside, which never carries it.
       return hasText
-    }
-    if (constraints.includes(property)) {
-      return !hasContentBoxEdges(style, property)
     }
     if (property === "position" || insets.includes(property)) {
       return style.position !== "fixed"
@@ -277,6 +268,12 @@ const readFrame = ({
     const marker = markerOf(style)
     if (marker) {
       record(path, "::marker", marker)
+    }
+    const isSizedAsContentBox =
+      style.boxSizing === "content-box" &&
+      bindsSize(node, "box-sizing", "border-box")
+    if (isSizedAsContentBox) {
+      record(path, "box-sizing", "content-box")
     }
     const isWidgetInput =
       node.localName === "input" && widgetInputs.includes(node.type)
@@ -348,6 +345,23 @@ const readFrame = ({
       record(path, "empty layer", "absolute")
     }
   }
+  const recordInlineBoxes = (node, children) => {
+    const boxes = children.filter((child) => "element" in child)
+    const measured = [node, ...boxes.map(({ element }) => element)]
+    for (const { element, path } of boxes) {
+      const { display } = getComputedStyle(element)
+      const layout = display.replace(/^inline-/, "")
+      const emittedDisplay = ["flex", "grid"].includes(layout)
+        ? layout
+        : "block"
+      const isLaidOutApart =
+        display.startsWith("inline") &&
+        bindsSize(element, "display", emittedDisplay, measured)
+      if (isLaidOutApart) {
+        record(path, "display", `${display} in a block`)
+      }
+    }
+  }
 
   const visit = (node, parent) => {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -395,11 +409,15 @@ const readFrame = ({
     if (hasText && hasElements) {
       record(path, "children", "text and elements")
     }
+    const isBlockFlow =
+      display === "block" || (display === "list-item" && !markerOf(style))
     const hasSupportedLayout =
-      /^(block|(inline-)?(flex|grid))$/.test(display) ||
-      (display === "list-item" && !markerOf(style))
+      isBlockFlow || /^(inline-)?(flex|grid)$/.test(display)
     if (hasElements && !hasSupportedLayout) {
       record(path, "display", display)
+    }
+    if (isBlockFlow) {
+      recordInlineBoxes(node, children)
     }
     enter(contextElement)
     recordDropped(node, path, hasText)
@@ -516,18 +534,15 @@ const readFrame = ({
   }
   const joinParts = (parts) => parts.join(" ").replaceAll(" ,", ",")
 
-  const decide = (
-    real,
-    [markedFirst, markedSecond, markedWithFontSizesPinned]
-  ) => {
+  const decide = (real, [markedFirst, markedSecond, markedDirect]) => {
     if (real === markedFirst && real === markedSecond) {
       return { value: real, tokens: [] }
     }
-    const [realParts, firstParts, secondParts, partsWithFontSizesPinned] = [
+    const [realParts, firstParts, secondParts, directParts] = [
       real,
       markedFirst,
       markedSecond,
-      markedWithFontSizesPinned,
+      markedDirect,
     ].map(splitParts)
     const boundAt = (index, realPart) => {
       const name = firstNames.get(firstParts[index])
@@ -547,7 +562,7 @@ const readFrame = ({
         : {
             value: real,
             tokens: [],
-            unbound: markedWithFontSizesPinned !== real,
+            unbound: markedDirect !== real,
           }
     }
     const found = []
@@ -560,7 +575,7 @@ const readFrame = ({
       }
       const dependsOnToken =
         firstParts[index] !== part || secondParts[index] !== part
-      if (dependsOnToken && partsWithFontSizesPinned[index] !== part) {
+      if (dependsOnToken && directParts[index] !== part) {
         unbound = true
       }
       return part
@@ -646,6 +661,13 @@ const readFrame = ({
           `color-mix(in srgb, ${color}, ${color})`
         )
       }
+    }
+    const parent = entry.parent?.element ?? frame.parentElement
+    const isZIndexIgnored =
+      entry.styles.position.value === "static" &&
+      !/flex|grid/.test(getComputedStyle(parent).display)
+    if (isZIndexIgnored) {
+      entry.styles["z-index"] = { value: "auto", tokens: [] }
     }
     if (entry.styles.position.value === "absolute") {
       pinStaticPosition(entry)

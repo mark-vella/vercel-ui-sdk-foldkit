@@ -398,7 +398,7 @@ const deferredFindings = [
   ["U4: input values", /^control value$/],
   ["U4: mixed text and element children", /^mixed text and elements$/],
   ["U4: built-in control drawing", /^element (input|select|progress|meter)/],
-  ["U4: a content-box sized element", /^content-box size$/],
+  ["U4: a content-box sized element", /^(content-box size|box-sizing)$/],
   [
     "U4: colour or weight on a display: contents element with text",
     /^display: contents styles its text$/,
@@ -406,7 +406,7 @@ const deferredFindings = [
   ["U4: position: relative recorded", /^position relative$/],
   [
     "U4: inline children under the block exception",
-    /^block with inline children$/,
+    /^(block with inline children|display \S+ in a block)$/,
   ],
   ["U4: a background with several layers", /^multi-layer background$/],
 ]
@@ -452,15 +452,13 @@ const notes = [
   "- elements is a lower bound where sibling layers share a path and record different longhands of one kind.",
   "- differs offline: the frame has the kind, and its emitted HTML rendered offline differs in a size, a binding or a colour. A lost control value, text or layer position can't show there.",
   "- only recorded loss: every loss the sidecar records in the frame is under this row. A kind the census detects itself is never a recorded loss.",
-  "- display <value> counts containers with element children. A table cell or grid that holds only text is not counted.",
+  "- display <value> counts containers with element children. A table cell or grid that holds only text is not counted. display <value> in a block counts inline children that lay out apart as blocks.",
   "- closed popup: a hidden slot that is or holds a ui-sdk popup's content. hidden part: any other hidden slot, such as a panel, an indicator or a backdrop.",
   "- a deferred finding's entries add up the elements of each kind it matches, so an svg under both svg kinds counts twice.",
-  "- the two svg kinds appear in the same frames, so each reads 0 in only recorded loss. The deferred svg row counts them together.",
+  "- every frame with svg styled by CSS also has svg currentColor. Each reads 0 in only recorded loss, and the deferred svg row counts them together.",
   "",
   "not counted",
   "- layer positions, which nothing compares yet",
-  "- max() and averaged tokens that bind the wrong token",
-  "- a font-size token used in another property",
   "- em, rem and vw sizes, which compute to px; only % and CSS functions are counted",
 ]
 

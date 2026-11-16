@@ -73,15 +73,6 @@ describe("minimum and maximum sizes", () => {
       }
     )
   })
-
-  test("are recorded on a content-box element whose padding they leave out", async () => {
-    const result = await capture(
-      `<div data-slot="tall" style="display: flex; min-height: 40px; padding: 4px"><div style="width: 8px; height: 8px"></div></div>`
-    )
-    assert.deepEqual(result.unsupported, [
-      { layer: layerPath("tall"), property: "min-height", value: "40px" },
-    ])
-  })
 })
 
 describe("margins", () => {
@@ -222,6 +213,29 @@ describe("position", () => {
         .map(([, name]) => name)
         .slice(2),
       ["below", "overlay", "raised", "flow", "above", "top", "last"]
+    )
+  })
+
+  test("leaves out a z-index that CSS ignores on a static child of a block", async () => {
+    const result = await capture(
+      `<div data-slot="block" style="position: relative"><div data-slot="ignored" style="z-index: 1; height: 10px"></div><div data-slot="cover" style="position: absolute; inset: 0; background-color: var(--tint)"></div></div><div data-slot="row" style="position: relative; display: flex"><div data-slot="lifted" style="z-index: 1; width: 10px; height: 10px"></div><div data-slot="under" style="position: absolute; inset: 0; background-color: var(--tint)"></div></div>`
+    )
+    assert.deepEqual(
+      {
+        order: [...result.html.matchAll(/layer-name="(\w+)"/g)]
+          .map(([, name]) => name)
+          .slice(2),
+        ignored: styleOf(result, "ignored"),
+        lifted: styleOf(result, "lifted"),
+        unsupported: result.unsupported,
+      },
+      {
+        order: ["block", "ignored", "cover", "row", "under", "lifted"],
+        ignored:
+          "flex-shrink: 1; height: 10px; min-width: 0px; min-height: 0px",
+        lifted: "flex-shrink: 1; width: 10px; height: 10px; z-index: 1",
+        unsupported: [],
+      }
     )
   })
 
