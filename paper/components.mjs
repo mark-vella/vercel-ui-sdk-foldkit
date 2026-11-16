@@ -3,15 +3,15 @@ import { copyFile, readFile, rm } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { launchBrowser } from "./capture.mjs"
-import { findPageId } from "./pages.mjs"
+import { findPageId, PrerequisiteError } from "./pages.mjs"
 import { checkExport, flattenTree, parseTree } from "./roundtrip.mjs"
-import { readCodeTokens } from "./tokens.mjs"
+import { readCodeTokens, readPaperTokens } from "./tokens.mjs"
 
 const components = {
   label: "components",
   page: "02 Components",
   outFolder: fileURLToPath(new URL("./out/", import.meta.url)),
-  source: (sidecar) => path.dirname(path.dirname(sidecar.sources[0])),
+  sourceOf: (sidecar) => path.dirname(path.dirname(sidecar.sources[0])),
 }
 const artboardStyles = {
   width: "400px",
@@ -40,21 +40,24 @@ const shortHash = (sidecar) => sidecar.hash.slice(0, 12)
 const escapeText = (text) =>
   text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 
-const formatProvenance = (source, sidecar, hashes) => {
+const formatProvenance = (sourcePath, sidecar, hashes) => {
   const commit = `${sidecar.commit.slice(0, 12)}${sidecar.dirty ? " with uncommitted changes" : ""}`
   return [
-    `source ${source}`,
+    `source ${sourcePath}`,
     `commit ${commit}`,
     ...[...hashes]
       .sort()
-      .map(([name, { source, paper }]) => `${name} ${source} ${paper}`),
+      .map(
+        ([name, { sourceHash, fingerprint }]) =>
+          `${name} ${sourceHash} ${fingerprint}`
+      ),
   ].join("\n")
 }
 
 const parseProvenance = (text) =>
   new Map(
     [...text.matchAll(/^(\S+\/\S+) ([0-9a-f]{12}) ([0-9a-f]{12})$/gm)].map(
-      ([, name, source, paper]) => [name, { source, paper }]
+      ([, name, sourceHash, fingerprint]) => [name, { sourceHash, fingerprint }]
     )
   )
 
@@ -106,8 +109,37 @@ const readArtboard = async (paper, fileId, artboardId) => {
   return { children, provenance, recorded }
 }
 
-const syncFrames = async (paper, fileId, { page, source, captures }) => {
+const assertTokensPresent = async (paper, fileId, captures) => {
+  const present = new Set(
+    (await readPaperTokens(paper, fileId)).map(({ name }) => name)
+  )
+  const missing = new Set(
+    captures
+      .flatMap(({ sidecar }) => sidecar.bindings)
+      .map(({ token }) => token)
+      .filter((token) => !present.has(token))
+  )
+  if (missing.size > 0) {
+    throw new PrerequisiteError(
+      `Paper is missing tokens these frames use (${[...missing].join(", ")}). Run node paper/sync.mjs tokens --file ${fileId} first.`
+    )
+  }
+}
+
+const isInSync = async (paper, fileId, { frame, entry, sidecar }) => {
+  if (!frame || entry?.sourceHash !== shortHash(sidecar)) {
+    return false
+  }
+  const { jsx, fingerprint } = await readPaperFrame(paper, fileId, frame)
+  return (
+    entry.fingerprint === fingerprint &&
+    sidecar.bindings.every(({ token }) => jsx.includes(`var(${token})`))
+  )
+}
+
+const syncFrames = async (paper, fileId, { page, sourceOf, captures }) => {
   const { pageId, artboards } = await readArtboards(paper, fileId, page)
+  await assertTokensPresent(paper, fileId, captures)
   let writes = 0
   const write = (tool, args) => {
     writes++
@@ -142,14 +174,10 @@ const syncFrames = async (paper, fileId, { page, source, captures }) => {
     )
     const hashes = new Map(recorded)
     for (const { html, sidecar } of group) {
-      const source = shortHash(sidecar)
+      const sourceHash = shortHash(sidecar)
       const frame = children.find(({ name }) => name === sidecar.name)
       const entry = recorded.get(sidecar.name)
-      if (
-        frame &&
-        entry?.source === source &&
-        entry.paper === (await readPaperFrame(paper, fileId, frame)).fingerprint
-      ) {
+      if (await isInSync(paper, fileId, { frame, entry, sidecar })) {
         console.log(`${sidecar.name}: unchanged`)
         continue
       }
@@ -166,16 +194,16 @@ const syncFrames = async (paper, fileId, { page, source, captures }) => {
         })
       }
       hashes.set(sidecar.name, {
-        source,
-        paper: (await readPaperFrame(paper, fileId, written)).fingerprint,
+        sourceHash,
+        fingerprint: (await readPaperFrame(paper, fileId, written)).fingerprint,
       })
       console.log(
-        `${sidecar.name}: ${frame ? "replaced" : "created"}, ${source}`
+        `${sidecar.name}: ${frame ? "replaced" : "created"}, ${sourceHash}`
       )
     }
     if (writes > writesBefore) {
       const text = escapeText(
-        formatProvenance(source(group[0].sidecar), group[0].sidecar, hashes)
+        formatProvenance(sourceOf(group[0].sidecar), group[0].sidecar, hashes)
       )
       if (provenance) {
         await write("set_text_content", {
@@ -246,13 +274,13 @@ const verifyFrame = async (paper, fileId, context) => {
     fileId,
     frames[0]
   )
-  const source = shortHash(sidecar)
+  const sourceHash = shortHash(sidecar)
   const entry = recorded.get(sidecar.name)
-  if (entry?.source !== source) {
+  if (entry?.sourceHash !== sourceHash) {
     differences.push(
-      `provenance records ${entry?.source ?? "no hash"}, capture is ${source}`
+      `provenance records ${entry?.sourceHash ?? "no hash"}, capture is ${sourceHash}`
     )
-  } else if (entry.paper !== fingerprint) {
+  } else if (entry.fingerprint !== fingerprint) {
     differences.push("the frame was edited in Paper after the last sync")
   }
   differences.push(

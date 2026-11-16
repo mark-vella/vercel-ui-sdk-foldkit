@@ -180,7 +180,7 @@ const verifyPages = async (paper, fileId) => {
   return differences === 0
 }
 
-class MissingPageError extends Error {}
+class PrerequisiteError extends Error {}
 
 const findPageId = async (paper, fileId, name) => {
   if (!kitPageNames.includes(name)) {
@@ -188,11 +188,11 @@ const findPageId = async (paper, fileId, name) => {
   }
   const page = pagesByName(await readPages(paper, fileId)).get(name)
   if (!page) {
-    throw new MissingPageError(
+    throw new PrerequisiteError(
       `${name} is missing. Run node paper/sync.mjs pages --file ${fileId} first.`
     )
   }
   return page.id
 }
 
-export { findPageId, MissingPageError, syncPages, verifyPages }
+export { findPageId, PrerequisiteError, syncPages, verifyPages }

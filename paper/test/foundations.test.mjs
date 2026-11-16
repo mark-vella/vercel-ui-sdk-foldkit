@@ -95,6 +95,31 @@ describe("the rendered foundations", () => {
     assert.deepEqual(rowsWithoutTheirToken, [])
   })
 
+  test("set each shadow on a white box over a tinted ground", () => {
+    const { flat } = rendered.find(({ name }) => name === "elevation/tokens")
+    const backgroundOf = (path) =>
+      flat.bindings.find(
+        ({ layer, property }) =>
+          layer.endsWith(path) && property === "background-color"
+      )?.token
+    const shadows = [
+      "--shadow-drop",
+      "--shadow-drop-pressed",
+      "--shadow-1",
+      "--shadow-float",
+      "--shadow-2",
+      "--shadow-3",
+    ]
+    assert.deepEqual(
+      shadows.map((name) => [
+        name,
+        backgroundOf(` > ${name} > ground`),
+        backgroundOf(` > ${name} > ground > specimen`),
+      ]),
+      shadows.map((name) => [name, "--tint", "--surface-1"])
+    )
+  })
+
   test("drop nothing and leave nothing unbound", () => {
     assert.deepEqual(
       rendered.map(({ name, flat }) => [name, flat.unsupported, flat.unbound]),

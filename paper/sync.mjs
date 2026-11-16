@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util"
 import { syncComponents } from "./components.mjs"
 import { syncFoundations } from "./foundations.mjs"
-import { MissingPageError, syncPages } from "./pages.mjs"
+import { PrerequisiteError, syncPages } from "./pages.mjs"
 import { connectPaper } from "./paper-client.mjs"
 import {
   describeToken,
@@ -88,7 +88,7 @@ const paper = await connectPaper()
 try {
   await command(paper, values.file, names)
 } catch (error) {
-  if (!(error instanceof MissingPageError)) {
+  if (!(error instanceof PrerequisiteError)) {
     throw error
   }
   console.error(error.message)

@@ -15,7 +15,7 @@ const foundations = {
   label: "foundations",
   page: "01 Foundations",
   outFolder: fileURLToPath(new URL("./out/foundations/", import.meta.url)),
-  source: () => stylesheet,
+  sourceOf: () => stylesheet,
 }
 const groups = ["color", "type", "spacing", "size", "radius", "elevation"]
 const laneWidth = "176px"
@@ -74,7 +74,7 @@ const kinds = {
   shadow: {
     group: "elevation",
     specimen: (name) =>
-      `<div style="display: flex; padding: var(--space-8)">${boxSpecimen(
+      `<div data-paper-layer="ground" style="display: flex; padding: var(--space-8); border-radius: var(--radius-surface); background-color: var(--tint)">${boxSpecimen(
         `width: 96px; height: 64px; border-radius: var(--radius-surface); background-color: var(--surface-1); box-shadow: var(${name})`
       )}</div>`,
   },

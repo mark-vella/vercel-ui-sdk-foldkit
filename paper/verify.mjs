@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util"
 import { verifyComponents } from "./components.mjs"
 import { verifyFoundations } from "./foundations.mjs"
-import { MissingPageError, verifyPages } from "./pages.mjs"
+import { PrerequisiteError, verifyPages } from "./pages.mjs"
 import { connectPaper } from "./paper-client.mjs"
 import {
   describeToken,
@@ -59,7 +59,7 @@ const paper = await connectPaper()
 try {
   process.exitCode = (await command(paper, values.file, names)) ? 0 : 1
 } catch (error) {
-  if (!(error instanceof MissingPageError)) {
+  if (!(error instanceof PrerequisiteError)) {
     throw error
   }
   console.error(error.message)

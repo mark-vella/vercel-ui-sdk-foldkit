@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { syncFrames } from "../components.mjs"
-import { findPageId, MissingPageError } from "../pages.mjs"
+import { findPageId, PrerequisiteError } from "../pages.mjs"
 
 const fileWithoutKitPages = () => {
   const tools = []
@@ -27,7 +27,7 @@ test("finds a kit page by name", async () => {
 test("says to sync pages when a kit page is missing", async () => {
   await assert.rejects(
     findPageId(fileWithoutKitPages(), "file", "01 Foundations"),
-    new MissingPageError(
+    new PrerequisiteError(
       "01 Foundations is missing. Run node paper/sync.mjs pages --file file first."
     )
   )
@@ -38,10 +38,10 @@ test("writes nothing to a file without the kit pages", async () => {
   await assert.rejects(
     syncFrames(paper, "file", {
       page: "02 Components",
-      source: () => "examples/components/button",
+      sourceOf: () => "examples/components/button",
       captures: [{ html: "<div></div>", sidecar: { name: "button/basic" } }],
     }),
-    MissingPageError
+    PrerequisiteError
   )
   assert.deepEqual(paper.tools, ["get_basic_info"])
 })
