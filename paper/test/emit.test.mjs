@@ -103,7 +103,9 @@ describe("margins", () => {
   })
 
   test("of a heading are emitted as the browser gives them", async () => {
-    const result = await capture(`<h4 data-slot="h">Title</h4>`)
+    const result = await capture(
+      `<h4 data-slot="h" style="margin-block: 1.33em">Title</h4>`
+    )
     assert.match(styleOf(result, "h"), /^margin: 21\.28px 0px; /)
   })
 })

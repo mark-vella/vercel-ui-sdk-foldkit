@@ -1,5 +1,5 @@
-Frame "probe/turn" (172-0) ?×?
-  Text "caption" (173-0) ?×? "probe/turn"
-  Frame "preview" (174-0) ?×?
-    Frame "track" (175-0) 120×60
-      Frame "bar" (176-0) 40×10
+Frame "probe/turn" (40D-0) ?×?
+  Text "caption" (40E-0) ?×? "probe/turn"
+  Frame "preview" (40F-0) 512×?
+    Frame "track" (40G-0) 120×60
+      Frame "bar" (40H-0) 40×10

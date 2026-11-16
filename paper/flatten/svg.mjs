@@ -1,24 +1,16 @@
 const createSvgReader =
-  ({ shadow, dropped, record, round }) =>
+  ({ comparison, record, round }) =>
   (svg, path) => {
-    const copies = [svg, svg].map((root) =>
-      shadow.appendChild(root.cloneNode(true))
-    )
-    // Paper writes flex-shrink: 0 on every svg it imports.
-    copies[1].style.flexShrink = "0"
-    const [live, copied] = [svg, copies[0]].map((root) => [
-      root,
-      ...root.querySelectorAll("*"),
+    const found = comparison.droppedFromCopies(svg, [
+      () => {},
+      // Paper writes flex-shrink: 0 on every svg it imports.
+      (copy) => {
+        copy.style.flexShrink = "0"
+      },
     ])
-    live.forEach((element, index) => {
-      const at = index === 0 ? path : `${path} > ${element.localName}`
-      const references = index === 0 ? copies : [copied[index]]
-      for (const [property, value] of dropped(element, references)) {
-        record(at, property, value)
-      }
-    })
-    for (const copy of copies) {
-      copy.remove()
+    for (const { element, property, value } of found) {
+      const at = element === svg ? path : `${path} > ${element.localName}`
+      record(at, property, value)
     }
     if (svg.outerHTML.includes("currentColor")) {
       record(path, "color", getComputedStyle(svg).color)

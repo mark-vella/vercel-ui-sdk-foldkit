@@ -1,8 +1,10 @@
 import assert from "node:assert/strict"
-import { readFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import { after, before, describe, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { captureFrame, launchBrowser } from "../capture.mjs"
+import { captureExamples, captureFrame, launchBrowser } from "../capture.mjs"
 import { checkExport, parseTree } from "../roundtrip.mjs"
 import { readCodeTokens } from "../tokens.mjs"
 
@@ -48,12 +50,18 @@ const captureProbe = async (name) => {
   return { name, ...flat }
 }
 
-const readButton = async () => {
-  const [sidecar, html] = await Promise.all([
-    readFixture("button-basic.json"),
-    readFixture("button-basic.emitted.txt"),
-  ])
-  return { ...JSON.parse(sidecar), html: html.trim() }
+const captureButton = async () => {
+  const outFolder = await mkdtemp(path.join(tmpdir(), "paper-roundtrip-"))
+  try {
+    const captures = await Array.fromAsync(
+      captureExamples(browser, ["button/basic"], { outFolder })
+    )
+    const [{ sidecar, html, error }] = captures
+    assert.equal(error, undefined)
+    return { ...sidecar, html }
+  } finally {
+    await rm(outFolder, { recursive: true })
+  }
 }
 
 const check = (sidecar, { jsx, summary }) =>
@@ -72,7 +80,7 @@ const replaceOnce = (text, from, to) => {
 
 describe("a faithful export", () => {
   test("of button/basic passes", async () => {
-    const sidecar = await readButton()
+    const sidecar = await captureButton()
     assert.deepEqual(await check(sidecar, await readExport("button/basic")), [])
   })
 
@@ -92,7 +100,7 @@ describe("a faithful export", () => {
 
 describe("a capture that recorded a drop", () => {
   test("fails a faithful export, naming the layer and the drop", async () => {
-    const sidecar = await readButton()
+    const sidecar = await captureButton()
     sidecar.unsupported = [
       {
         layer: "button/basic > preview > button",
@@ -128,10 +136,8 @@ describe("an export edited away from the capture", () => {
       "one more pixel of padding",
       ["paddingInline: '14px'", "paddingInline: '15px'"],
       [
-        "button/basic is 121.719x114 in Paper's export, 119.719x114 in capture",
-        "button/basic > caption is 73.719x20 in Paper's export, 71.719x20 in capture",
-        "button/basic > preview is 73.719x34 in Paper's export, 71.719x34 in capture",
         `${button} is 73.719x34 in Paper's export, 71.719x34 in capture`,
+        "button/basic looks different in Paper's export, in the 78x38 region at 241,56 of the frame",
       ],
     ],
     [
@@ -140,13 +146,13 @@ describe("an export edited away from the capture", () => {
       [
         `${button}: color is bound to --ink in capture, not in Paper's export`,
         `${button}: color is bound to --muted in Paper's export, not in capture`,
-        `${button} looks different in Paper's export, in the 42x11 region at 39,68 of the frame`,
+        `${button} looks different in Paper's export, in the 42x11 region at 259,68 of the frame`,
       ],
     ],
   ]
   for (const [label, [from, to], expected] of edits) {
     test(`fails on ${label}`, async () => {
-      const sidecar = await readButton()
+      const sidecar = await captureButton()
       const { jsx, summary } = await readExport("button/basic")
       const edited = { jsx: replaceOnce(jsx, from, to), summary }
       assert.deepEqual(await check(sidecar, edited), expected)
@@ -173,8 +179,8 @@ describe("an export edited away from the capture", () => {
         "",
       ],
       [
-        "probe/border is 288x208 in Paper's export, 288x209 in capture",
-        "probe/border > preview is 240x132 in Paper's export, 240x133 in capture",
+        "probe/border is 560x210 in Paper's export, 560x211 in capture",
+        "probe/border > preview is 512x132 in Paper's export, 512x133 in capture",
         "probe/border > preview > list is 240x74 in Paper's export, 240x75 in capture",
         "probe/border > preview > list: border-top is bound to --line-faint in capture, not in Paper's export",
       ],
@@ -190,7 +196,7 @@ describe("an export edited away from the capture", () => {
   }
 
   test("fails on a layer Paper holds hidden", async () => {
-    const sidecar = await readButton()
+    const sidecar = await captureButton()
     const { jsx, summary } = await readExport("button/basic")
     const caption = jsx.match(/\n *<div[^\n]*>\n *button\/basic\n *<\/div>/)[0]
     const hidden = {
@@ -222,17 +228,17 @@ describe("an export that draws differently at the same sizes", () => {
         "left: '30px', position: 'absolute'",
         "left: '30px', position: 'absolute', zIndex: '1'",
       ],
-      `${track} > holder > high looks different in Paper's export, in the 20x16 region at 74,56 of the frame`,
+      `${track} > holder > high looks different in Paper's export, in the 20x16 region at 74,58 of the frame`,
     ],
     [
       "another opacity",
       ["opacity: '0.4'", "opacity: '0.7'"],
-      `${track} > faded looks different in Paper's export, in the 20x20 region at 124,52 of the frame`,
+      `${track} > faded looks different in Paper's export, in the 20x20 region at 124,54 of the frame`,
     ],
     [
       "a translate dropped",
       ["translate: '10px 5px', ", ""],
-      `${track} looks different in Paper's export, in the 30x25 region at 144,52 of the frame`,
+      `${track} looks different in Paper's export, in the 30x25 region at 144,54 of the frame`,
     ],
   ]
   for (const [label, [from, to], expected] of edits) {
@@ -247,7 +253,7 @@ describe("an export that draws differently at the same sizes", () => {
   test("fails on the translate Paper drops after a rotate", async () => {
     const sidecar = await captureProbe("probe/turn")
     assert.deepEqual(await check(sidecar, await readExport("probe/turn")), [
-      "probe/turn looks different in Paper's export, in the 10x60 region at 39,37 of the frame",
+      "probe/turn looks different in Paper's export, in the 10x60 region at 39,39 of the frame",
     ])
   })
 })

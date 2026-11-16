@@ -9,11 +9,13 @@ const createRecords = ({
   replacedElements,
   widgets,
   widgetInputs,
-  reference,
-  bindsSize,
-  dropped,
+  comparison,
 }) => {
   const movesOrTurns = new RegExp(movesOrTurnsSource)
+  const emittedDisplay = (display) => {
+    const layout = display.replace(/^inline-/, "")
+    return ["flex", "grid"].includes(layout) ? layout : "block"
+  }
   const scrolls = (node, property) => {
     const value = getComputedStyle(node).getPropertyValue(property)
     const overflows =
@@ -49,9 +51,8 @@ const createRecords = ({
     return true
   }
   const recordDropped = (node, path, hasText) => {
-    for (const [property, value] of dropped(
+    for (const [property, value] of comparison.dropped(
       node,
-      [reference],
       isEmittedBy(hasText)
     )) {
       record(path, property, value)
@@ -69,7 +70,7 @@ const createRecords = ({
     }
     const isSizedAsContentBox =
       style.boxSizing === "content-box" &&
-      bindsSize(node, "box-sizing", "border-box")
+      comparison.bindsSize(node, "box-sizing", "border-box")
     if (isSizedAsContentBox) {
       record(path, "box-sizing", "content-box")
     }
@@ -87,6 +88,15 @@ const createRecords = ({
     if (drawsItself || isRenderedLegend) {
       const element = isWidgetInput ? `input type=${node.type}` : node.localName
       record(path, "element", element)
+    } else if (node.localName !== "div") {
+      const { width, height } = comparison.resizesAsDiv(
+        node,
+        emittedDisplay(style.display)
+      )
+      const change = width && height ? "size" : width ? "width" : "height"
+      if (width || height) {
+        record(path, "element", `${node.localName} ${change}`)
+      }
     }
     const value = node.value || node.placeholder
     const showsValue =
@@ -123,13 +133,14 @@ const createRecords = ({
     const measured = [node, ...boxes.map(({ element }) => element)]
     for (const { element, path } of boxes) {
       const { display } = getComputedStyle(element)
-      const layout = display.replace(/^inline-/, "")
-      const emittedDisplay = ["flex", "grid"].includes(layout)
-        ? layout
-        : "block"
       const isLaidOutApart =
         display.startsWith("inline") &&
-        bindsSize(element, "display", emittedDisplay, measured)
+        comparison.bindsSize(
+          element,
+          "display",
+          emittedDisplay(display),
+          measured
+        )
       if (isLaidOutApart) {
         record(path, "display", `${display} in a block`)
       }

@@ -142,7 +142,7 @@ test("counts a display: contents element that styles its own text", async () => 
 
 test("counts a list item without a marker as block flow, and not one with a marker", async () => {
   const { kinds } = await inspect(
-    `<ul style="margin: 0; padding: 0; list-style: none; line-height: 20px"><li><div>One</div></li></ul><ul style="margin: 0; line-height: 20px"><li><div>Two</div></li></ul>`
+    `<ul style="margin: 0; padding: 0; list-style: none; line-height: 20px"><li><div>One</div></li></ul><ul style="margin: 0; list-style: disc; line-height: 20px"><li><div>Two</div></li></ul>`
   )
   assert.deepEqual(kinds, { "block with element children": 3 })
 })

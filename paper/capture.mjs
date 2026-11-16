@@ -14,18 +14,31 @@ const repo = fileURLToPath(new URL("..", import.meta.url))
 const built = path.join(repo, "apps/docs/public")
 const defaultOutFolder = path.join(repo, "paper/out")
 const origin = "https://capture.paper"
+const docsContentWidth = "32rem"
+const docsRequire = createRequire(new URL("../apps/docs/", import.meta.url))
 const geistFonts = path.join(
-  path.dirname(
-    createRequire(new URL("../apps/docs/", import.meta.url)).resolve(
-      "geist/font"
-    )
-  ),
+  path.dirname(docsRequire.resolve("geist/font")),
   "fonts"
 )
-const fonts = new Map([
-  ["/fonts/geist.woff2", "geist-sans/Geist-Variable.woff2"],
-  ["/fonts/geist-mono.woff2", "geist-mono/GeistMono-Variable.woff2"],
+const pageFiles = new Map([
+  [
+    "/fonts/geist.woff2",
+    path.join(geistFonts, "geist-sans/Geist-Variable.woff2"),
+  ],
+  [
+    "/fonts/geist-mono.woff2",
+    path.join(geistFonts, "geist-mono/GeistMono-Variable.woff2"),
+  ],
+  ["/preflight.css", docsRequire.resolve("tailwindcss/preflight.css")],
 ])
+const pageOptions = {
+  colorScheme: "light",
+  viewport: { width: 1280, height: 800 },
+  deviceScaleFactor: 2,
+}
+const longestAwaitedTimer = 1000
+const noMotion =
+  "*, *::before, *::after { transition: none !important; animation: none !important; }"
 const { chromium } = createRequire(new URL("../tests/", import.meta.url))(
   "@playwright/test"
 )
@@ -72,13 +85,15 @@ const pageHtml = (name, stylesheets) => `<!doctype html>
 <html lang="en">
 <head>
 <style>
+@layer ui-sdk, base, utilities;
+@import url(/preflight.css) layer(base);
 @font-face { font-family: Geist; src: url(/fonts/geist.woff2) format("woff2"); font-weight: 100 900; }
 @font-face { font-family: "Geist Mono"; src: url(/fonts/geist-mono.woff2) format("woff2"); font-weight: 100 900; }
 :root { color-scheme: light; --font-geist-mono: "Geist Mono"; --lightningcss-light: initial; --lightningcss-dark: ; }
-body { display: flex; align-items: flex-start; margin: 0; font-family: Geist; }
-*, *::before, *::after { transition: none !important; animation: none !important; }
+body { display: grid; justify-content: start; font-family: Geist; }
+${noMotion}
 @layer utilities {
-  .example-content { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+  .example-content { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; width: ${docsContentWidth}; }
 }
 </style>
 ${stylesheets.map((href) => `<link rel="stylesheet" href="${href}">`).join("\n")}
@@ -97,8 +112,8 @@ const serve = (page, { html, root }) =>
     if (pathname === "/") {
       return route.fulfill({ contentType: "text/html", body: html })
     }
-    if (fonts.has(pathname)) {
-      return route.fulfill({ path: path.join(geistFonts, fonts.get(pathname)) })
+    if (pageFiles.has(pathname)) {
+      return route.fulfill({ path: pageFiles.get(pathname) })
     }
     return route.fulfill({ path: path.join(root, pathname) })
   })
@@ -115,6 +130,44 @@ const mountExample = (page, { script, mount }) =>
     { script, mount }
   )
 
+const trackTimers = (longest) => {
+  const timeouts = new Set()
+  const intervalRuns = new Map()
+  const { setTimeout, setInterval, clearTimeout, clearInterval } = window
+  const isAwaited = (callback, delay) =>
+    typeof callback === "function" && !(delay > longest)
+  window.setTimeout = (callback, delay, ...args) => {
+    if (!isAwaited(callback, delay)) {
+      return setTimeout(callback, delay, ...args)
+    }
+    const id = setTimeout(() => {
+      timeouts.delete(id)
+      callback(...args)
+    }, delay)
+    timeouts.add(id)
+    return id
+  }
+  window.setInterval = (callback, delay, ...args) => {
+    if (!isAwaited(callback, delay)) {
+      return setInterval(callback, delay, ...args)
+    }
+    const id = setInterval(() => {
+      intervalRuns.set(id, intervalRuns.get(id) + 1)
+      callback(...args)
+    }, delay)
+    intervalRuns.set(id, 0)
+    return id
+  }
+  const clear = (cancel) => (id) => {
+    timeouts.delete(id)
+    intervalRuns.delete(id)
+    cancel(id)
+  }
+  window.clearTimeout = clear(clearTimeout)
+  window.clearInterval = clear(clearInterval)
+  window.paperTimers = { timeouts, intervalRuns }
+}
+
 const waitUntilSettled = async () => {
   await document.fonts.ready
   const twoRenderedFrames = () =>
@@ -123,9 +176,12 @@ const waitUntilSettled = async () => {
         requestAnimationFrame(() => setTimeout(resolve))
       )
     )
+  const { timeouts, intervalRuns } = window.paperTimers
   let hasChanged = true
+  let runsAtChange = new Map(intervalRuns)
   const observer = new MutationObserver(() => {
     hasChanged = true
+    runsAtChange = new Map(intervalRuns)
   })
   observer.observe(document.body, {
     subtree: true,
@@ -133,28 +189,32 @@ const waitUntilSettled = async () => {
     attributes: true,
     characterData: true,
   })
-  for (let attempt = 0; hasChanged && attempt < 60; attempt++) {
+  const isWorking = () =>
+    timeouts.size > 0 ||
+    [...intervalRuns].some(([id, runs]) => runs <= (runsAtChange.get(id) ?? 0))
+  for (
+    let attempt = 0;
+    (hasChanged || isWorking()) && attempt < 60;
+    attempt++
+  ) {
     hasChanged = false
     await twoRenderedFrames()
   }
   observer.disconnect()
-  return !hasChanged
+  return !hasChanged && !isWorking()
 }
 
-const launchBrowser = () =>
-  chromium.launch({ args: ["--font-render-hinting=none"] })
+const launchBrowser = (options) =>
+  chromium.launch({ ...options, args: ["--font-render-hinting=none"] })
 
 const captureFrame = async (
   browser,
   { name, root, stylesheets, mount, tokens, inspect }
 ) => {
-  const page = await browser.newPage({
-    colorScheme: "light",
-    viewport: { width: 1280, height: 800 },
-    deviceScaleFactor: 2,
-  })
+  const page = await browser.newPage(pageOptions)
   try {
     await serve(page, { html: pageHtml(name, stylesheets), root })
+    await page.addInitScript(trackTimers, longestAwaitedTimer)
     await page.goto(`${origin}/`)
     await mount(page)
     const isSettled = await page.evaluate(waitUntilSettled)
@@ -272,4 +332,12 @@ if (import.meta.main) {
   }
 }
 
-export { captureExamples, captureFrame, launchBrowser, readCommit, saveCapture }
+export {
+  captureExamples,
+  captureFrame,
+  launchBrowser,
+  noMotion,
+  pageOptions,
+  readCommit,
+  saveCapture,
+}

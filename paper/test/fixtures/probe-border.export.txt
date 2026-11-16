@@ -1,10 +1,10 @@
 (
     <div style={{ backgroundColor: 'var(--paper)', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', fontSynthesis: 'none', gap: 'var(--space-3)', MozOsxFontSmoothing: 'grayscale', overflowWrap: 'anywhere', padding: 'var(--space-6)', WebkitFontSmoothing: 'antialiased' }}>
-      <div style={{ boxSizing: 'border-box', color: 'var(--muted)', fontFamily: '"Geist", system-ui, sans-serif', fontSize: 'var(--text-xs)', lineHeight: '16px' }}>
+      <div style={{ boxSizing: 'border-box', color: 'var(--muted)', fontFamily: '"Geist", system-ui, sans-serif', fontSize: 'var(--text-xs)', lineHeight: '18px' }}>
         probe/border
       </div>
-      <div style={{ alignItems: 'start', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ borderTopColor: 'var(--line-faint)', borderTopStyle: 'solid', borderTopWidth: '1px', boxSizing: 'border-box', width: '240px' }}>
+      <div style={{ alignItems: 'start', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', flexShrink: '1', gap: '12px', width: '512px' }}>
+        <div style={{ borderTopColor: 'var(--line-faint)', borderTopStyle: 'solid', borderTopWidth: '1px', boxSizing: 'border-box', flexShrink: '1', width: '240px' }}>
           <div style={{ borderBottomColor: 'var(--line-faint)', borderBottomStyle: 'solid', borderBottomWidth: '1px', boxSizing: 'border-box', padding: 'var(--space-2)' }}>
             <div style={{ boxSizing: 'border-box', color: 'var(--ink)', fontFamily: '"Geist", system-ui, sans-serif', fontSize: 'var(--text-md)', lineHeight: 'var(--leading)' }}>
               First

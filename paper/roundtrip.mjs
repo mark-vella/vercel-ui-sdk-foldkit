@@ -340,23 +340,25 @@ const checkExport = async (browser, { jsx, tree, sidecar, html, tokens }) => {
     loader: "jsx",
     jsxFactory: "h",
   })
-  const rendered = await captureFrame(browser, {
-    name: sidecar.name,
-    root: repo,
-    stylesheets: ["/examples/styles/tokens.css"],
-    mount: (page) =>
-      page.evaluate(mountExport, {
-        code,
-        names: namedFor(tree, layerNames(sidecar)),
-      }),
-    tokens,
-  })
-  const emitted = await renderEmitted(browser, {
-    sidecar,
-    html,
-    tokens,
-    inspect: (page) => page.evaluate(readLayerBoxes),
-  })
+  const [rendered, emitted] = await Promise.all([
+    captureFrame(browser, {
+      name: sidecar.name,
+      root: repo,
+      stylesheets: ["/examples/styles/tokens.css"],
+      mount: (page) =>
+        page.evaluate(mountExport, {
+          code,
+          names: namedFor(tree, layerNames(sidecar)),
+        }),
+      tokens,
+    }),
+    renderEmitted(browser, {
+      sidecar,
+      html,
+      tokens,
+      inspect: (page) => page.evaluate(readLayerBoxes),
+    }),
+  ])
   const region = await comparePictures(browser, {
     expected: emitted,
     actual: rendered,

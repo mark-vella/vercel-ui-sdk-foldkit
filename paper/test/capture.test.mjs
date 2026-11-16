@@ -40,6 +40,14 @@ const capture = (html) =>
 const elementTag = ({ html }, slot) =>
   html.match(new RegExp(`<div layer-name="${slot}"[^>]*>`))?.[0]
 
+const preflightOnSvg = [
+  "border-bottom-style",
+  "border-left-style",
+  "border-right-style",
+  "border-top-style",
+  "box-sizing",
+]
+
 const layer = ({ layers }, path) => layers.find((entry) => entry.layer === path)
 
 const unsupportedAt = ({ unsupported }, path) =>
@@ -61,6 +69,49 @@ describe("the capture page", () => {
       tokens,
     })
     assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-/)
+  })
+
+  test("gives the example the docs' content width", async () => {
+    const result = await capture(`<div data-slot="x">Text</div>`)
+    assert.equal(layer(result, "fixture/case > preview").width, 512)
+  })
+
+  test("leaves no default margin on a heading or a paragraph", async () => {
+    const result = await capture(
+      `<h4 data-slot="title">Title</h4><p data-slot="body">Body</p>`
+    )
+    assert.deepEqual(
+      [elementTag(result, "title"), elementTag(result, "body")],
+      [
+        `<div layer-name="title" style="font-family: Geist; line-height: 24px">`,
+        `<div layer-name="body" style="font-family: Geist; line-height: 24px">`,
+      ]
+    )
+  })
+
+  test("sizes a padded box with a set width as border-box", async () => {
+    const result = await capture(
+      `<div data-slot="box" style="width: 40px; height: 10px; padding: 4px"></div>`
+    )
+    const { width, height } = layer(result, layerPath("box"))
+    assert.deepEqual({ width, height }, { width: 40, height: 10 })
+  })
+
+  test("lets an example's rule beat the base rule it overrides", async () => {
+    const result = await capture(
+      `<style>:where([data-slot="title"]) { font-size: 20px }</style><h4 data-slot="title">Title</h4>`
+    )
+    assert.equal(
+      elementTag(result, "title"),
+      `<div layer-name="title" style="font-family: Geist; font-size: 20px; line-height: 30px">`
+    )
+  })
+
+  test("resolves a percentage height against a flex row, as the docs preview does", async () => {
+    const result = await capture(
+      `<div data-slot="row" style="display: flex; align-items: center"><div style="width: 10px; height: 28px"></div><div data-slot="fill" style="width: 10px; height: 100%"></div></div>`
+    )
+    assert.equal(layer(result, layerPath("row > fill")).height, 28)
   })
 
   test("renders var(--mono) text in Geist Mono", async () => {
@@ -140,6 +191,64 @@ describe("settling", () => {
       },
       { isSettled: true, height: 6 * 12 - 12 }
     )
+  })
+
+  const captureMounted = (mount) =>
+    captureFrame(browser, {
+      name: "fixture/case",
+      root: repo,
+      stylesheets: ["/examples/styles/tokens.css"],
+      mount: (page) => page.locator(".example-content").evaluate(mount),
+      tokens,
+    })
+  const settledHeight = (result) => ({
+    isSettled: result.isSettled,
+    height: layer(result, "fixture/case > preview").height,
+  })
+
+  test("waits for a timer the example set before it changes", async () => {
+    const result = await captureMounted((preview) => {
+      setTimeout(() => {
+        preview.append(...[1, 2, 3].map(() => document.createElement("div")))
+      }, 400)
+    })
+    assert.deepEqual(settledHeight(result), {
+      isSettled: true,
+      height: 3 * 12 - 12,
+    })
+  })
+
+  test("waits for an interval to run once without changing anything", async () => {
+    const result = await captureMounted((preview) => {
+      setInterval(() => {
+        if (preview.children.length < 3) {
+          preview.append(document.createElement("div"))
+        }
+      }, 100)
+    })
+    assert.deepEqual(settledHeight(result), {
+      isSettled: true,
+      height: 3 * 12 - 12,
+    })
+  })
+
+  test("reads an example whose interval keeps changing it, as unsettled", async () => {
+    const result = await captureMounted((preview) => {
+      let tick = 0
+      setInterval(() => {
+        preview.dataset.tick = String(tick++)
+      }, 100)
+    })
+    assert.equal(result.isSettled, false)
+  })
+
+  test("does not wait for a timer longer than a second", async () => {
+    const result = await captureMounted((preview) => {
+      setTimeout(() => {
+        preview.append(document.createElement("div"))
+      }, 1500)
+    })
+    assert.deepEqual(settledHeight(result), { isSettled: true, height: 0 })
   })
 
   test("records in the sidecar a capture that never settled", async () => {
@@ -330,7 +439,7 @@ describe("text-only flex elements", () => {
     )
     assert.equal(
       elementTag(result, "label"),
-      `<div layer-name="label" style="display: flex; font-family: Geist; line-height: 21px">`
+      `<div layer-name="label" style="display: flex; font-family: Geist; line-height: 24px">`
     )
     assert.deepEqual(
       result.bindings.filter(({ layer }) => layer === layerPath("label")),
@@ -433,6 +542,7 @@ describe("what the flattener does not emit", () => {
       `<style>[data-slot="x"] svg { width: 16px; height: 16px }</style><div data-slot="x" style="display: flex; color: var(--danger)"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M0 0h24v24H0z" fill="currentColor"/></svg></div>`
     )
     assert.deepEqual(unsupportedAt(result, `${layerPath("x")} > svg`), [
+      ...preflightOnSvg,
       "color",
       "height",
       "width",
@@ -467,12 +577,17 @@ describe("what the flattener does not emit", () => {
     const result = await capture(
       `<style>[data-slot="x"] path { stroke: var(--danger) }</style><div data-slot="x" style="display: flex"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M0 0h24v24H0z" fill="none" stroke="black"/></svg></div>`
     )
+    const svg = `${layerPath("x")} > svg`
+    const preflight = (layer) =>
+      preflightOnSvg.map((property) => ({
+        layer,
+        property,
+        value: property === "box-sizing" ? "border-box" : "solid",
+      }))
     assert.deepEqual(result.unsupported, [
-      {
-        layer: `${layerPath("x")} > svg > path`,
-        property: "stroke",
-        value: "rgb(214, 0, 32)",
-      },
+      ...preflight(svg),
+      ...preflight(`${svg} > path`),
+      { layer: `${svg} > path`, property: "stroke", value: "rgb(214, 0, 32)" },
     ])
   })
 
@@ -488,7 +603,7 @@ describe("what the flattener does not emit", () => {
 
   test("records content-box sizing only where border-box would change the box", async () => {
     const result = await capture(
-      `<div data-slot="wide" style="width: 40px; height: 10px; padding-right: 8px"></div><div data-slot="tall" style="display: flex; min-height: 40px; padding: 4px"><div style="width: 8px; height: 8px"></div></div><div data-slot="plain" style="width: 40px; height: 10px"></div><div data-slot="padded" style="padding: 4px"><div style="width: 8px; height: 8px"></div></div>`
+      `<div data-slot="wide" style="box-sizing: content-box; width: 40px; height: 10px; padding-right: 8px"></div><div data-slot="tall" style="box-sizing: content-box; display: flex; min-height: 40px; padding: 4px"><div style="width: 8px; height: 8px"></div></div><div data-slot="plain" style="box-sizing: content-box; width: 40px; height: 10px"></div><div data-slot="padded" style="box-sizing: content-box; padding: 4px"><div style="width: 8px; height: 8px"></div></div>`
     )
     assert.deepEqual(result.unsupported, [
       {
@@ -517,6 +632,68 @@ describe("what the flattener does not emit", () => {
     ])
   })
 
+  test("records an element whose own tag sizes it unlike the div it becomes", async () => {
+    const result = await capture(
+      `<div data-slot="menu" style="width: 200px"><button data-slot="trigger" style="display: inline-flex">Go</button></div><div data-slot="labels" style="width: 200px"><span data-slot="label" style="display: block">Text</span><a data-slot="link" style="display: flex">Link</a></div>`
+    )
+    assert.deepEqual(result.unsupported, [
+      {
+        layer: layerPath("menu > trigger"),
+        property: "element",
+        value: "button width",
+      },
+    ])
+  })
+
+  test("measures a tag that sizes like a div once, not once per element", async () => {
+    const rules = Array.from(
+      { length: 100 },
+      (_, index) =>
+        `[data-slot="list"]:has(> :last-child) > * { --rule-${index}: ${index} }`
+    )
+    const rows = `<span data-slot="row" style="display: block">Row</span>`
+    const start = performance.now()
+    const result = await capture(
+      `<style>${rules.join("")}</style><div data-slot="list">${rows.repeat(300)}</div>`
+    )
+    const elapsed = performance.now() - start
+    assert.deepEqual(result.unsupported, [])
+    assert.ok(elapsed < 8000, `captured in ${Math.round(elapsed)} ms`)
+  })
+
+  test("leaves a checked radio checked while it measures the element around it", async () => {
+    const result = await capture(
+      `<style>:checked + [data-slot="mark"] { background-color: rgb(255, 0, 0) }</style><label data-slot="choice" style="display: block"><input type="radio" name="pick" checked><span data-slot="mark" style="display: block">On</span></label>`
+    )
+    assert.match(elementTag(result, "mark"), /background-color: rgb\(255 0 0\)/)
+  })
+
+  test("connects no copy of a custom element while it measures the element around it", async () => {
+    const result = await captureFrame(browser, {
+      name: "fixture/case",
+      root: repo,
+      stylesheets: ["/examples/styles/tokens.css"],
+      mount: async (page) => {
+        await page.evaluate(() =>
+          customElements.define(
+            "x-part",
+            class extends HTMLElement {
+              connectedCallback() {
+                const status = document.querySelector('[data-slot="status"]')
+                status.textContent = String(Number(status.textContent) + 1)
+              }
+            }
+          )
+        )
+        await fill(
+          `<span data-slot="field" style="display: block"><x-part>Part</x-part></span><div data-slot="status">0</div>`
+        )(page)
+      },
+      tokens,
+    })
+    assert.match(result.html, /layer-name="status"[^>]*>1</)
+  })
+
   test("records a fieldset's legend, which lays itself out", async () => {
     const result = await capture(
       `<fieldset style="display: flex; margin: 0; padding: 0; border: 0"><legend data-slot="x" style="padding: 0">Title</legend></fieldset>`
@@ -538,7 +715,7 @@ describe("what the flattener does not emit", () => {
   })
 
   for (const [label, listStyle, marker] of [
-    ["a list item's marker", "", "disc"],
+    ["a list item's marker", "list-style: disc", "disc"],
     [
       "a list item's image marker",
       "list-style: linear-gradient(red, blue)",
@@ -564,7 +741,9 @@ describe("what the flattener does not emit", () => {
   })
 
   test("records nothing for an input's default overflow", async () => {
-    const result = await capture(`<input data-slot="x">`)
+    const result = await capture(
+      `<input data-slot="x" style="width: 160px; height: 32px">`
+    )
     assert.deepEqual(result.unsupported, [])
   })
 

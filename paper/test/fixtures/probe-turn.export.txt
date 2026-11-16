@@ -1,9 +1,9 @@
 (
     <div style={{ backgroundColor: 'var(--paper)', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', fontSynthesis: 'none', gap: 'var(--space-3)', MozOsxFontSmoothing: 'grayscale', overflowWrap: 'anywhere', padding: 'var(--space-6)', WebkitFontSmoothing: 'antialiased' }}>
-      <div style={{ boxSizing: 'border-box', color: 'var(--muted)', fontFamily: '"Geist", system-ui, sans-serif', fontSize: 'var(--text-xs)', lineHeight: '16px' }}>
+      <div style={{ boxSizing: 'border-box', color: 'var(--muted)', fontFamily: '"Geist", system-ui, sans-serif', fontSize: 'var(--text-xs)', lineHeight: '18px' }}>
         probe/turn
       </div>
-      <div style={{ alignItems: 'start', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ alignItems: 'start', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', flexShrink: '1', width: '512px' }}>
         <div style={{ backgroundColor: 'var(--tint)', boxSizing: 'border-box', display: 'flex', flexShrink: '1', height: '60px', width: '120px' }}>
           <div style={{ backgroundColor: 'var(--ink)', boxSizing: 'border-box', flexShrink: '1', height: '10px', rotate: '90deg', transformOrigin: '50% 50%', width: '40px' }} />
         </div>

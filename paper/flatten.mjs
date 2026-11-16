@@ -40,52 +40,28 @@ const markerOf = ({ display, listStyleImage, listStyleType }) => {
   return listStyleType === "none" ? null : listStyleType
 }
 
-const pageFunctions = {
-  markerOf,
-  isHeldBackground,
-  createBindings,
-  createComparison,
-  createRecords,
-  createSvgReader,
-  readTree,
-  createUsedValues,
-}
-
-const readFrame = ({
-  sources,
-  tokens,
-  boxProperties,
-  computedProperties,
-  textProperties,
-  emittedProperties,
-  ignoredProperties,
-  logicalSource,
-  replacedElements,
-  widgets,
-  widgetInputs,
-  colorSource,
-  sizeConstraints,
-  insets,
-  harmlessSources,
-  tagDefaults,
-  backgroundLonghands,
-  movesOrTurnsSource,
-}) => {
-  const {
-    markerOf,
-    isHeldBackground,
-    createBindings,
-    createComparison,
-    createRecords,
-    createSvgReader,
-    readTree,
-    createUsedValues,
-  } = Object.fromEntries(
-    Object.entries(sources).map(([name, source]) => [
-      name,
-      new Function(`return ${source}`)(),
-    ])
-  )
+const readFrame = (
+  helpers,
+  {
+    tokens,
+    boxProperties,
+    computedProperties,
+    textProperties,
+    emittedProperties,
+    ignoredProperties,
+    logicalSource,
+    replacedElements,
+    widgets,
+    widgetInputs,
+    colorSource,
+    sizeConstraints,
+    insets,
+    harmlessSources,
+    tagDefaults,
+    backgroundLonghands,
+    movesOrTurnsSource,
+  }
+) => {
   const frame = document.querySelector("[data-example]")
   const probe = document.head.appendChild(document.createElement("div"))
   const longhands = (property) => {
@@ -117,7 +93,7 @@ const readFrame = ({
     probe.style.setProperty(property, value)
     return getComputedStyle(probe).getPropertyValue(property)
   }
-  const bindings = createBindings({
+  const bindings = helpers.createBindings({
     frame,
     tokens,
     serialize,
@@ -129,38 +105,32 @@ const readFrame = ({
   const unsupported = []
   const record = (layer, property, value) =>
     unsupported.push({ layer, property, value })
-  const comparison = createComparison({
+  const comparison = helpers.createComparison({
     compared,
     insets,
     harmlessSources,
     tagDefaults,
     sizeConstraints,
   })
-  const { recordDropped, recordAbsolute, recordInlineBoxes } = createRecords({
-    record,
-    emitted,
-    insets,
-    movesOrTurnsSource,
-    backgroundLonghands,
-    isHeldBackground,
-    markerOf,
-    replacedElements,
-    widgets,
-    widgetInputs,
-    reference: comparison.reference,
-    bindsSize: comparison.bindsSize,
-    dropped: comparison.dropped,
-  })
-  const readSvg = createSvgReader({
-    shadow: comparison.shadow,
-    dropped: comparison.dropped,
-    record,
-    round,
-  })
-  const { tree, elements } = readTree({
+  const { recordDropped, recordAbsolute, recordInlineBoxes } =
+    helpers.createRecords({
+      record,
+      emitted,
+      insets,
+      movesOrTurnsSource,
+      backgroundLonghands,
+      isHeldBackground: helpers.isHeldBackground,
+      markerOf: helpers.markerOf,
+      replacedElements,
+      widgets,
+      widgetInputs,
+      comparison,
+    })
+  const readSvg = helpers.createSvgReader({ comparison, record, round })
+  const { tree, elements } = helpers.readTree({
     frame,
     record,
-    markerOf,
+    markerOf: helpers.markerOf,
     enter: comparison.enter,
     readSvg,
     recordDropped,
@@ -172,10 +142,8 @@ const readFrame = ({
   const rects = elements.map(({ element }) => element.getBoundingClientRect())
   const marked = bindings.readMarked(elements, record)
 
-  const { usedLineHeight, pinStaticPosition, pinUsedSize } = createUsedValues({
-    frame,
-    round,
-  })
+  const { usedLineHeight, pinStaticPosition, pinUsedSize } =
+    helpers.createUsedValues({ frame, round })
   const colorPattern = new RegExp(colorSource, "g")
   const colors = {}
   elements.forEach((entry, index) => {
@@ -218,15 +186,34 @@ const readFrame = ({
   return { tree, colors, unsupported }
 }
 
+const pageFunctions = {
+  markerOf,
+  isHeldBackground,
+  createBindings,
+  createComparison,
+  createRecords,
+  createSvgReader,
+  readTree,
+  createUsedValues,
+  readFrame,
+}
+
+const runInPage = ({ sources, input }) => {
+  const helpers = Object.fromEntries(
+    Object.entries(sources).map(([name, source]) => [
+      name,
+      new Function(`"use strict"; return ${source}`)(),
+    ])
+  )
+  return helpers.readFrame(helpers, input)
+}
+
 const escapeText = (text) =>
   text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 const escapeAttribute = (text) => escapeText(text).replace(/"/g, "&quot;")
 
 const flattenFrame = async (page, tokens) => {
-  const { tree, colors, unsupported } = await page.evaluate(readFrame, {
-    sources: Object.fromEntries(
-      Object.entries(pageFunctions).map(([name, fn]) => [name, String(fn)])
-    ),
+  const input = {
     tokens,
     boxProperties,
     computedProperties,
@@ -247,6 +234,12 @@ const flattenFrame = async (page, tokens) => {
     tagDefaults,
     backgroundLonghands,
     movesOrTurnsSource: movesOrTurns.source,
+  }
+  const { tree, colors, unsupported } = await page.evaluate(runInPage, {
+    sources: Object.fromEntries(
+      Object.entries(pageFunctions).map(([name, fn]) => [name, String(fn)])
+    ),
+    input,
   })
   const layers = []
   const bindings = []
@@ -306,4 +299,4 @@ const flattenFrame = async (page, tokens) => {
   }
 }
 
-export { flattenFrame, markerOf }
+export { flattenFrame, markerOf, pageFunctions, runInPage }
