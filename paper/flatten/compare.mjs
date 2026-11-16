@@ -68,22 +68,29 @@ const createComparison = ({
     const before = sizes()
     return before !== withStyle(node, `${property}: ${value}`, sizes)
   }
-  const toDiv = (node, display) => {
-    const div = document.createElement("div")
-    for (const { name, value } of node.attributes) {
-      div.setAttribute(name, value)
-    }
+  const pinnedCopy = (node, copy) => {
     const computed = node.computedStyleMap()
     for (const property of getComputedStyle(node)) {
-      div.style.setProperty(
+      copy.style.setProperty(
         property,
         String(computed.get(property)),
         "important"
       )
     }
+    copy.append(...[...node.childNodes].map(copyOf))
+    return withoutIdentity(copy)
+  }
+  const divWithAttributes = (node) => {
+    const div = document.createElement("div")
+    for (const { name, value } of node.attributes) {
+      div.setAttribute(name, value)
+    }
+    return div
+  }
+  const toDiv = (node, display) => {
+    const div = pinnedCopy(node, divWithAttributes(node))
     div.style.setProperty("display", display, "important")
-    div.append(...[...node.childNodes].map(copyOf))
-    return withoutIdentity(div)
+    return div
   }
   // A connected copy of a custom element upgrades, and a copy that keeps its
   // name joins the radio group or exclusive details it came from.
@@ -91,12 +98,11 @@ const createComparison = ({
     if (node.nodeType !== Node.ELEMENT_NODE) {
       return node.cloneNode()
     }
-    if (node.localName.includes("-")) {
-      return toDiv(node, getComputedStyle(node).display)
-    }
-    const copy = node.cloneNode()
-    copy.append(...[...node.childNodes].map(copyOf))
-    return withoutIdentity(copy)
+    const isCustom = node.localName.includes("-")
+    return pinnedCopy(
+      node,
+      isCustom ? divWithAttributes(node) : node.cloneNode()
+    )
   }
   const withoutIdentity = (element) => {
     for (const attribute of ["id", "name", "autofocus"]) {

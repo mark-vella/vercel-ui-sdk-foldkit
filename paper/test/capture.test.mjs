@@ -288,6 +288,77 @@ describe("settling", () => {
   })
 })
 
+describe("requests to another origin", () => {
+  test("are blocked and recorded, so the network does not change the frame", async () => {
+    const url = "https://photos.example/avatar.svg"
+    let requests = 0
+    const withNetwork = (respond) => ({
+      newPage: async (options) => {
+        const page = await browser.newPage(options)
+        await page.route(url, (route) => {
+          requests++
+          return respond(route)
+        })
+        return page
+      },
+    })
+    const reachable = withNetwork((route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"/>',
+      })
+    )
+    const unreachable = withNetwork((route) =>
+      route.abort("internetdisconnected")
+    )
+    const avatar = `<style>[data-state="loaded"] { background-color: rgb(0, 128, 0) }</style><div data-slot="avatar" style="width: 40px; height: 40px"><img data-slot="photo" src="${url}" style="width: 40px; height: 40px" onload="this.parentElement.dataset.state = 'loaded'" onerror="this.parentElement.dataset.state = 'failed'"></div>`
+    const captureOn = (network) =>
+      captureFrame(network, {
+        name: "fixture/case",
+        root: repo,
+        stylesheets: ["/examples/styles/tokens.css"],
+        mount: fill(avatar),
+        tokens,
+      })
+    const online = await captureOn(reachable)
+    const offline = await captureOn(unreachable)
+    assert.equal(requests, 0)
+    assert.equal(online.html, offline.html)
+    for (const result of [online, offline]) {
+      assert.deepEqual(
+        result.unsupported.filter(
+          ({ property }) => property === "blocked request"
+        ),
+        [
+          {
+            layer: layerPath("avatar > photo"),
+            property: "blocked request",
+            value: url,
+          },
+        ]
+      )
+    }
+  })
+
+  test("are recorded on the frame when no element names them", async () => {
+    const result = await capture(
+      `<div data-slot="pattern" style="width: 40px; height: 40px; background-image: url(https://photos.example/pattern.png)"></div>`
+    )
+    assert.deepEqual(
+      result.unsupported.filter(
+        ({ property }) => property === "blocked request"
+      ),
+      [
+        {
+          layer: "fixture/case",
+          property: "blocked request",
+          value: "https://photos.example/pattern.png",
+        },
+      ]
+    )
+  })
+})
+
 describe("measured sizes", () => {
   test("describe the layout before the capture adds anything", async () => {
     const result = await capture(
@@ -645,6 +716,19 @@ describe("what the flattener does not emit", () => {
     ])
   })
 
+  test("measures an element's tag with its children styled as on the page", async () => {
+    const result = await capture(
+      `<style>ul > li { padding-block: 6px }</style><ul data-slot="list" style="margin: 0; padding: 0; list-style: none"><li><div>One</div></li><li><div>Two</div></li></ul><div data-slot="menu" style="width: 200px"><button data-slot="trigger" style="display: inline-flex">Go</button></div>`
+    )
+    assert.deepEqual(result.unsupported, [
+      {
+        layer: layerPath("menu > trigger"),
+        property: "element",
+        value: "button width",
+      },
+    ])
+  })
+
   test("measures a tag that sizes like a div once, not once per element", async () => {
     const rules = Array.from(
       { length: 100 },
@@ -659,6 +743,19 @@ describe("what the flattener does not emit", () => {
     const elapsed = performance.now() - start
     assert.deepEqual(result.unsupported, [])
     assert.ok(elapsed < 8000, `captured in ${Math.round(elapsed)} ms`)
+  })
+
+  test("measures a tag once for each display it is emitted with", async () => {
+    const result = await capture(
+      `<style>b::first-line { font-size: 40px }</style><div style="width: 200px"><b data-slot="row" style="display: flex">Row</b><b data-slot="title" style="display: block">Title</b></div>`
+    )
+    assert.deepEqual(result.unsupported, [
+      {
+        layer: layerPath("div > title"),
+        property: "element",
+        value: "b height",
+      },
+    ])
   })
 
   test("leaves a checked radio checked while it measures the element around it", async () => {

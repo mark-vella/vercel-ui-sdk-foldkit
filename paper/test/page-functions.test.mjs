@@ -15,7 +15,10 @@ const freeNames = (fn) =>
           browserApis.map((name) => [name, "readonly"])
         ),
       },
-      rules: { "no-undef": "error" },
+      rules: {
+        "no-undef": ["error", { typeof: true }],
+        "no-restricted-globals": ["error", "escape", "unescape"],
+      },
     })
     .map(({ message }) => message)
 
@@ -29,6 +32,17 @@ describe("the functions the flattener runs in the page", () => {
   test("would be caught leaving a name that matches a browser global", () => {
     const visit = (node, parentEntry) => parent?.element ?? node
     assert.deepEqual(freeNames(visit), ["'parent' is not defined."])
+  })
+
+  test("would be caught reading a legacy global or testing a name's type", () => {
+    const encode = (text) => escape(text)
+    const decode = (text) => unescape(text)
+    const isNested = () => typeof parent === "object"
+    assert.deepEqual([encode, decode, isNested].flatMap(freeNames), [
+      "Unexpected use of 'escape'.",
+      "Unexpected use of 'unescape'.",
+      "'parent' is not defined.",
+    ])
   })
 
   test("run in strict mode, so a stray assignment throws", () => {

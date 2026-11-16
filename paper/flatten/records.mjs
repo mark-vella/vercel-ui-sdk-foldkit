@@ -98,6 +98,12 @@ const createRecords = ({
         record(path, "element", `${node.localName} ${change}`)
       }
     }
+    const isBlocked =
+      /^https?:/.test(node.currentSrc) &&
+      !node.currentSrc.startsWith(`${document.location.origin}/`)
+    if (isBlocked) {
+      record(path, "blocked request", node.currentSrc)
+    }
     const value = node.value || node.placeholder
     const showsValue =
       ["input", "textarea", "select"].includes(node.localName) && !isWidgetInput

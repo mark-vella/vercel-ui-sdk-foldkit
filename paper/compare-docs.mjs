@@ -2,12 +2,13 @@ import { spawn } from "node:child_process"
 import { once } from "node:events"
 import { glob, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
-import { tmpdir } from "node:os"
+import { constants, tmpdir } from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
 import {
+  blockOtherOrigins,
   captureExamples,
   launchBrowser,
   noMotion,
@@ -24,19 +25,9 @@ const sizeTolerance = 0.5
 const startupTimeout = 180_000
 const docsQuietPeriod = 1000
 const docsSettleLimit = 10_000
+const stopSignals = ["SIGINT", "SIGTERM", "SIGHUP"]
 const paintDifference =
   "The docs square every corner with border-radius: 0 !important in apps/docs/app/global.css. The capture keeps the corners the example's CSS writes, bound to the radius tokens."
-
-const knownDifferences = new Map([
-  [
-    "avatar/basic",
-    {
-      layers: ["avatar-image#0", "avatar-fallback#0", "visually-hidden#0"],
-      reason:
-        "its image loads from https://github.com/shadcn.png. The capture reads the frame before the image arrives and shows the fallback, and the docs page shows the photo. Whether a capture waits for a remote image or serves it locally is not decided yet.",
-    },
-  ],
-])
 
 const readDocsExamples = async () => {
   const pages = new Map()
@@ -82,22 +73,24 @@ const startDocs = async (port) => {
   // next dev rewrites next-env.d.ts, which is checked in.
   const stop = () => {
     stopping ??= (async () => {
-      process.off("SIGINT", stopAndExit)
-      process.off("SIGTERM", stopAndExit)
       if (server.exitCode === null) {
         process.kill(-server.pid, "SIGTERM")
         await exited
       }
       await writeFile(nextEnv, nextEnvText)
+      for (const signal of stopSignals) {
+        process.off(signal, stopAndExit)
+      }
     })()
     return stopping
   }
   const stopAndExit = async (signal) => {
     await stop()
-    process.exit(signal === "SIGINT" ? 130 : 143)
+    process.exit(128 + constants.signals[signal])
   }
-  process.once("SIGINT", stopAndExit)
-  process.once("SIGTERM", stopAndExit)
+  for (const signal of stopSignals) {
+    process.on(signal, stopAndExit)
+  }
   const deadline = Date.now() + startupTimeout
   const firstPage = `${url}/docs/web-components/components/button`
   while (!(await isServing(firstPage))) {
@@ -177,6 +170,7 @@ const measureDocs = async (browser, url, examples) => {
   for (const [docsPage, entries] of byPage) {
     const page = await browser.newPage(pageOptions)
     try {
+      await blockOtherOrigins(page, url)
       await page.goto(`${url}/docs/web-components/components/${docsPage}`, {
         timeout: startupTimeout,
       })
@@ -246,59 +240,45 @@ const measureCapture = async (browser, names) => {
   return measured
 }
 
-const compareRows = (docs, capture, knownLayers = []) => {
+const compareRows = (docs, capture) => {
   const captured = new Map(capture.map((row) => [row.key, row]))
-  const differences = []
-  const differ = (layer, text) => differences.push({ layer, text })
+  const sizes = []
   let squared = 0
   for (const row of docs) {
     const other = captured.get(row.key)
     captured.delete(row.key)
     if (!other) {
-      differ(row.key, `${row.key} is missing in the capture`)
+      sizes.push(`${row.key} is missing in the capture`)
       continue
     }
     const isSameSize =
       Math.abs(row.width - other.width) <= sizeTolerance &&
       Math.abs(row.height - other.height) <= sizeTolerance
     if (!isSameSize) {
-      differ(
-        row.key,
+      sizes.push(
         `${row.key} is ${other.width}x${other.height} in the capture, ${row.width}x${row.height} in the docs`
       )
     }
     if (row.radius === "0px" && other.radius !== "0px") {
       squared++
     } else if (row.radius !== other.radius) {
-      differ(
-        row.key,
+      sizes.push(
         `${row.key} has radius ${other.radius} in the capture, ${row.radius} in the docs`
       )
     }
   }
   for (const key of captured.keys()) {
-    differ(key, `${key} is missing in the docs`)
+    sizes.push(`${key} is missing in the docs`)
   }
-  const isKnown = ({ layer }) => knownLayers.includes(layer)
-  const texts = (list) => list.map(({ text }) => text)
-  return {
-    sizes: texts(differences.filter((difference) => !isKnown(difference))),
-    known: texts(differences.filter(isKnown)),
-    stale: knownLayers.filter(
-      (layer) => !differences.some((difference) => difference.layer === layer)
-    ),
-    squared,
-  }
+  return { sizes, squared }
 }
 
-const report = (examples, docs, capture, listedDifferences) => {
+const report = (examples, docs, capture) => {
   const lines = []
   let same = 0
-  let knownLayers = 0
   let squaredLayers = 0
   let squaredExamples = 0
   let failures = 0
-  const indented = (texts) => texts.map((text) => `  ${text}`)
   for (const [name] of examples) {
     const error = docs.get(name).error ?? capture.get(name).error
     if (error) {
@@ -306,36 +286,22 @@ const report = (examples, docs, capture, listedDifferences) => {
       lines.push(`${name}: not compared, ${error}`)
       continue
     }
-    const listed = listedDifferences.get(name)
-    const { sizes, known, stale, squared } = compareRows(
+    const { sizes, squared } = compareRows(
       docs.get(name).rows,
-      capture.get(name).rows,
-      listed?.layers
+      capture.get(name).rows
     )
     squaredLayers += squared
     squaredExamples += squared > 0 ? 1 : 0
-    knownLayers += known.length
-    if (known.length > 0) {
-      lines.push(`${name}: known, ${listed.reason}`, ...indented(known))
-    }
-    if (stale.length > 0) {
-      failures++
-      lines.push(
-        `${name}: listed as a known difference, but the same this run`,
-        ...indented(stale)
-      )
-    }
-    if (sizes.length > 0) {
-      failures++
-      lines.push(`${name}: differs`, ...indented(sizes))
-    } else if (known.length === 0) {
+    if (sizes.length === 0) {
       same++
+      continue
     }
+    failures++
+    lines.push(`${name}: differs`, ...sizes.map((size) => `  ${size}`))
   }
   lines.push(
     "",
     `same size in every layer: ${same} of ${examples.length}`,
-    `layers that differ as listed: ${knownLayers}`,
     `paint, known: ${squaredLayers} layers in ${squaredExamples} examples have rounded corners in the capture and square ones in the docs. ${paintDifference}`
   )
   return { text: lines.join("\n"), failures }
@@ -363,6 +329,7 @@ if (import.meta.main) {
     const browser = await launchBrowser({
       handleSIGINT: false,
       handleSIGTERM: false,
+      handleSIGHUP: false,
     })
     try {
       const docs = await measureDocs(browser, docsSite.url, examples)
@@ -370,12 +337,7 @@ if (import.meta.main) {
         browser,
         examples.map(([name]) => name)
       )
-      const { text, failures } = report(
-        examples,
-        docs,
-        capture,
-        knownDifferences
-      )
+      const { text, failures } = report(examples, docs, capture)
       console.log(text)
       process.exitCode = failures > 0 ? 1 : 0
     } finally {
@@ -386,4 +348,4 @@ if (import.meta.main) {
   }
 }
 
-export { compareRows, report }
+export { compareRows }

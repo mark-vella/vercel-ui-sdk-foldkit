@@ -106,6 +106,15 @@ ${stylesheets.map((href) => `<link rel="stylesheet" href="${href}">`).join("\n")
 </body>
 </html>`
 
+const blockOtherOrigins = (page, allowed, blocked = new Set()) =>
+  page.route(
+    (url) => /^https?:$/.test(url.protocol) && url.origin !== allowed,
+    (route) => {
+      blocked.add(route.request().url())
+      return route.abort("blockedbyclient")
+    }
+  )
+
 const serve = (page, { html, root }) =>
   page.route(`${origin}/**`, (route) => {
     const { pathname } = new URL(route.request().url())
@@ -212,7 +221,9 @@ const captureFrame = async (
   { name, root, stylesheets, mount, tokens, inspect }
 ) => {
   const page = await browser.newPage(pageOptions)
+  const blocked = new Set()
   try {
+    await blockOtherOrigins(page, origin, blocked)
     await serve(page, { html: pageHtml(name, stylesheets), root })
     await page.addInitScript(trackTimers, longestAwaitedTimer)
     await page.goto(`${origin}/`)
@@ -220,6 +231,19 @@ const captureFrame = async (
     const isSettled = await page.evaluate(waitUntilSettled)
     const inspection = await inspect?.(page)
     const flat = await flattenFrame(page, tokens)
+    const named = new Set(
+      flat.unsupported
+        .filter(({ property }) => property === "blocked request")
+        .map(({ value }) => value)
+    )
+    const unnamed = [...blocked].filter((url) => !named.has(url)).toSorted()
+    flat.unsupported.push(
+      ...unnamed.map((value) => ({
+        layer: flat.layers[0].layer,
+        property: "blocked request",
+        value,
+      }))
+    )
     const png = await page.locator("[data-example]").screenshot()
     return { ...flat, png, inspection, isSettled }
   } finally {
@@ -333,6 +357,7 @@ if (import.meta.main) {
 }
 
 export {
+  blockOtherOrigins,
   captureExamples,
   captureFrame,
   launchBrowser,
