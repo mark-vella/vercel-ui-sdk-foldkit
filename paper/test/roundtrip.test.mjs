@@ -11,6 +11,8 @@ const fixtures = new URL("./fixtures/", import.meta.url)
 const frames = {
   "probe/leading": `<div data-slot="stack" style="display: flex; flex-direction: column"><div data-slot="trigger" style="font-size: var(--text-md); line-height: 1.4; color: var(--ink)">Section one</div><div data-slot="trigger" style="font-size: var(--text-md); line-height: 1.4; color: var(--ink)">Section two</div><div data-slot="trigger" style="font-size: var(--text-md); line-height: 1.4; color: var(--ink)">Section three</div></div><div data-slot="para" style="width: 120px; font-size: var(--text-sm); line-height: 19.5px; color: var(--ink)">Shipping takes five to seven days.</div>`,
   "probe/border": `<div data-slot="list" style="width: 240px; border-top: 1px solid var(--line-faint)"><div data-slot="item" style="padding: var(--space-2); border-bottom: 1px solid var(--line-faint); color: var(--ink); font-size: var(--text-md); line-height: var(--leading)">First</div><div data-slot="item" style="padding: var(--space-2); border-bottom: 1px solid var(--line-faint); color: var(--ink); font-size: var(--text-md); line-height: var(--leading)">Second</div></div><div data-slot="card" style="display: flex; padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-control); color: var(--ink); font-size: var(--text-md); line-height: var(--leading)">Card</div>`,
+  "probe/paint": `<div data-slot="track" style="display: flex; width: 160px; height: 40px; background-color: var(--tint)"><div data-slot="holder" style="width: 50px; height: 30px; position: relative; background-color: var(--line)"><div data-slot="high" style="position: absolute; top: 0px; left: 30px; width: 40px; height: 20px; background-color: var(--danger)"></div></div><div data-slot="next" style="width: 50px; height: 30px; position: relative; top: 4px; background-color: var(--ink)"></div><div data-slot="faded" style="width: 20px; height: 20px; opacity: 0.4; background-color: var(--danger)"></div><div data-slot="offset" style="width: 20px; height: 20px; translate: 10px 5px; background-color: var(--ink)"></div></div>`,
+  "probe/turn": `<div data-slot="track" style="display: flex; width: 120px; height: 60px; background-color: var(--tint)"><div data-slot="bar" style="width: 40px; height: 10px; background-color: var(--ink); transform: rotate(90deg) translateX(20px)"></div></div>`,
 }
 let browser
 let tokens
@@ -46,8 +48,22 @@ const captureProbe = async (name) => {
   return { name, ...flat }
 }
 
+const readButton = async () => {
+  const [sidecar, html] = await Promise.all([
+    readFixture("button-basic.json"),
+    readFixture("button-basic.emitted.txt"),
+  ])
+  return { ...JSON.parse(sidecar), html: html.trim() }
+}
+
 const check = (sidecar, { jsx, summary }) =>
-  checkExport(browser, { jsx, tree: parseTree(summary), sidecar, tokens })
+  checkExport(browser, {
+    jsx,
+    tree: parseTree(summary),
+    sidecar,
+    html: sidecar.html,
+    tokens,
+  })
 
 const replaceOnce = (text, from, to) => {
   assert.ok(text.includes(from), `the export holds ${from}`)
@@ -56,7 +72,7 @@ const replaceOnce = (text, from, to) => {
 
 describe("a faithful export", () => {
   test("of button/basic passes", async () => {
-    const sidecar = JSON.parse(await readFixture("button-basic.json"))
+    const sidecar = await readButton()
     assert.deepEqual(await check(sidecar, await readExport("button/basic")), [])
   })
 
@@ -76,7 +92,7 @@ describe("a faithful export", () => {
 
 describe("a capture that recorded a drop", () => {
   test("fails a faithful export, naming the layer and the drop", async () => {
-    const sidecar = JSON.parse(await readFixture("button-basic.json"))
+    const sidecar = await readButton()
     sidecar.unsupported = [
       {
         layer: "button/basic > preview > button",
@@ -124,12 +140,13 @@ describe("an export edited away from the capture", () => {
       [
         `${button}: color is bound to --ink in capture, not in Paper's export`,
         `${button}: color is bound to --muted in Paper's export, not in capture`,
+        `${button} looks different in Paper's export, in the 42x11 region at 39,68 of the frame`,
       ],
     ],
   ]
   for (const [label, [from, to], expected] of edits) {
     test(`fails on ${label}`, async () => {
-      const sidecar = JSON.parse(await readFixture("button-basic.json"))
+      const sidecar = await readButton()
       const { jsx, summary } = await readExport("button/basic")
       const edited = { jsx: replaceOnce(jsx, from, to), summary }
       assert.deepEqual(await check(sidecar, edited), expected)
@@ -173,7 +190,7 @@ describe("an export edited away from the capture", () => {
   }
 
   test("fails on a layer Paper holds hidden", async () => {
-    const sidecar = JSON.parse(await readFixture("button-basic.json"))
+    const sidecar = await readButton()
     const { jsx, summary } = await readExport("button/basic")
     const caption = jsx.match(/\n *<div[^\n]*>\n *button\/basic\n *<\/div>/)[0]
     const hidden = {
@@ -187,6 +204,50 @@ describe("an export edited away from the capture", () => {
       "button/basic > caption: color is bound to --muted in capture, not in Paper's export",
       "button/basic > caption: font-size is bound to --text-xs in capture, not in Paper's export",
       "button/basic > caption: line-height is bound to --leading in capture, not in Paper's export",
+    ])
+  })
+})
+
+describe("an export that draws differently at the same sizes", () => {
+  test("passes when it draws the same", async () => {
+    const sidecar = await captureProbe("probe/paint")
+    assert.deepEqual(await check(sidecar, await readExport("probe/paint")), [])
+  })
+
+  const track = "probe/paint > preview > track"
+  const edits = [
+    [
+      "a layer lifted over a later one",
+      [
+        "left: '30px', position: 'absolute'",
+        "left: '30px', position: 'absolute', zIndex: '1'",
+      ],
+      `${track} > holder > high looks different in Paper's export, in the 20x16 region at 74,56 of the frame`,
+    ],
+    [
+      "another opacity",
+      ["opacity: '0.4'", "opacity: '0.7'"],
+      `${track} > faded looks different in Paper's export, in the 20x20 region at 124,52 of the frame`,
+    ],
+    [
+      "a translate dropped",
+      ["translate: '10px 5px', ", ""],
+      `${track} looks different in Paper's export, in the 30x25 region at 144,52 of the frame`,
+    ],
+  ]
+  for (const [label, [from, to], expected] of edits) {
+    test(`fails on ${label}, naming where`, async () => {
+      const sidecar = await captureProbe("probe/paint")
+      const { jsx, summary } = await readExport("probe/paint")
+      const edited = { jsx: replaceOnce(jsx, from, to), summary }
+      assert.deepEqual(await check(sidecar, edited), [expected])
+    })
+  }
+
+  test("fails on the translate Paper drops after a rotate", async () => {
+    const sidecar = await captureProbe("probe/turn")
+    assert.deepEqual(await check(sidecar, await readExport("probe/turn")), [
+      "probe/turn looks different in Paper's export, in the 10x60 region at 39,37 of the frame",
     ])
   })
 })

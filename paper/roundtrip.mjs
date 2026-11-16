@@ -217,7 +217,122 @@ const compareFrames = (sidecar, rendered, exported = "Paper's export") => {
   return differences
 }
 
-const checkExport = async (browser, { jsx, tree, sidecar, tokens }) => {
+const mountEmitted = (html) => {
+  const template = document.createElement("template")
+  template.innerHTML = html
+  for (const element of template.content.querySelectorAll("[layer-name]")) {
+    element.dataset.paperLayer = element.getAttribute("layer-name")
+  }
+  for (const element of template.content.querySelectorAll("div")) {
+    element.style.boxSizing = "border-box"
+  }
+  for (const svg of template.content.querySelectorAll("svg")) {
+    svg.style.flexShrink = "0"
+  }
+  const root = template.content.firstElementChild
+  root.dataset.example = ""
+  document.querySelector("[data-example]").replaceWith(root)
+}
+
+const renderEmitted = (browser, { sidecar, html, tokens, inspect }) =>
+  captureFrame(browser, {
+    name: sidecar.name,
+    root: repo,
+    stylesheets: ["/examples/styles/tokens.css"],
+    mount: (page) => page.evaluate(mountEmitted, html),
+    tokens,
+    inspect,
+  })
+
+const readLayerBoxes = () => {
+  const frame = document.querySelector("[data-example]")
+  const origin = frame.getBoundingClientRect()
+  const pathOf = (element) =>
+    element === frame
+      ? element.dataset.paperLayer
+      : `${pathOf(element.parentElement.closest("[data-paper-layer]"))} > ${element.dataset.paperLayer}`
+  const layers = [frame, ...frame.querySelectorAll("[data-paper-layer]")]
+  return layers.map((element) => {
+    const { left, top, width, height } = element.getBoundingClientRect()
+    return {
+      layer: pathOf(element),
+      left: left - origin.left,
+      top: top - origin.top,
+      width,
+      height,
+    }
+  })
+}
+
+const findChangedRegion = async ({ expected, actual, frameWidth }) => {
+  const decode = async (base64) => {
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0))
+    const bitmap = await createImageBitmap(new Blob([bytes]))
+    const context = new OffscreenCanvas(bitmap.width, bitmap.height).getContext(
+      "2d"
+    )
+    context.drawImage(bitmap, 0, 0)
+    return context.getImageData(0, 0, bitmap.width, bitmap.height)
+  }
+  const [before, after] = await Promise.all([decode(expected), decode(actual)])
+  if (before.width !== after.width || before.height !== after.height) {
+    return null
+  }
+  let edges = null
+  for (let index = 0; index < before.data.length; index++) {
+    if (before.data[index] === after.data[index]) {
+      continue
+    }
+    const pixel = index >> 2
+    const [x, y] = [pixel % before.width, Math.floor(pixel / before.width)]
+    edges = edges
+      ? [
+          Math.min(edges[0], x),
+          Math.min(edges[1], y),
+          Math.max(edges[2], x),
+          Math.max(edges[3], y),
+        ]
+      : [x, y, x, y]
+  }
+  if (!edges) {
+    return null
+  }
+  const scale = Math.round(before.width / frameWidth)
+  const [left, top] = edges.slice(0, 2).map((edge) => Math.floor(edge / scale))
+  const [right, bottom] = edges
+    .slice(2)
+    .map((edge) => Math.ceil((edge + 1) / scale))
+  return { left, top, width: right - left, height: bottom - top }
+}
+
+const comparePictures = async (browser, { expected, actual, sidecar }) => {
+  const page = await browser.newPage()
+  try {
+    return await page.evaluate(findChangedRegion, {
+      expected: expected.png.toString("base64"),
+      actual: actual.png.toString("base64"),
+      frameWidth: sidecar.frame.width,
+    })
+  } finally {
+    await page.close()
+  }
+}
+
+const describeRegion = (region, boxes) => {
+  const holds = (box) =>
+    box.left - 1 <= region.left &&
+    box.top - 1 <= region.top &&
+    region.left + region.width <= box.left + box.width + 1 &&
+    region.top + region.height <= box.top + box.height + 1
+  const area = ({ width, height }) => width * height
+  const innermost = boxes
+    .filter(holds)
+    .reduce((inner, box) => (area(box) <= area(inner) ? box : inner))
+  const { left, top, width, height } = region
+  return `${innermost.layer} looks different in Paper's export, in the ${width}x${height} region at ${left},${top} of the frame`
+}
+
+const checkExport = async (browser, { jsx, tree, sidecar, html, tokens }) => {
   const hidden = flattenTree(tree)
     .filter(({ isHidden }) => isHidden)
     .map(({ name }) => `${name} is hidden in Paper`)
@@ -236,34 +351,26 @@ const checkExport = async (browser, { jsx, tree, sidecar, tokens }) => {
       }),
     tokens,
   })
-  return [...hidden, ...compareFrames(sidecar, rendered)]
-}
-
-const mountEmitted = (html) => {
-  const template = document.createElement("template")
-  template.innerHTML = html
-  for (const element of template.content.querySelectorAll("[layer-name]")) {
-    element.dataset.paperLayer = element.getAttribute("layer-name")
-  }
-  for (const element of template.content.querySelectorAll("div")) {
-    element.style.boxSizing = "border-box"
-  }
-  for (const svg of template.content.querySelectorAll("svg")) {
-    svg.style.flexShrink = "0"
-  }
-  const root = template.content.firstElementChild
-  root.dataset.example = ""
-  document.querySelector("[data-example]").replaceWith(root)
+  const emitted = await renderEmitted(browser, {
+    sidecar,
+    html,
+    tokens,
+    inspect: (page) => page.evaluate(readLayerBoxes),
+  })
+  const region = await comparePictures(browser, {
+    expected: emitted,
+    actual: rendered,
+    sidecar,
+  })
+  return [
+    ...hidden,
+    ...compareFrames(sidecar, rendered),
+    ...(region ? [describeRegion(region, emitted.inspection)] : []),
+  ]
 }
 
 const checkEmitted = async (browser, { sidecar, html, tokens }) => {
-  const rendered = await captureFrame(browser, {
-    name: sidecar.name,
-    root: repo,
-    stylesheets: ["/examples/styles/tokens.css"],
-    mount: (page) => page.evaluate(mountEmitted, html),
-    tokens,
-  })
+  const rendered = await renderEmitted(browser, { sidecar, html, tokens })
   const kept = { ...sidecar, unsupported: [] }
   return compareFrames(kept, rendered, "the emitted HTML")
 }

@@ -259,7 +259,7 @@ const saveScreenshot = async (paper, fileId, { frame, sidecar, outFolder }) => {
 }
 
 const verifyFrame = async (paper, fileId, context) => {
-  const { artboards, browser, tokens, sidecar, outFolder } = context
+  const { artboards, browser, tokens, sidecar, html, outFolder } = context
   const component = componentOf(sidecar.name)
   const artboard = artboards.find(({ name }) => name === component)
   if (!artboard) {
@@ -291,7 +291,7 @@ const verifyFrame = async (paper, fileId, context) => {
     differences.push("the frame was edited in Paper after the last sync")
   }
   differences.push(
-    ...(await checkExport(browser, { jsx, tree, sidecar, tokens }))
+    ...(await checkExport(browser, { jsx, tree, sidecar, html, tokens }))
   )
   await saveScreenshot(paper, fileId, {
     frame: frames[0],
@@ -305,12 +305,13 @@ const verifyFrames = async (paper, fileId, context) => {
   const { label, page, outFolder, captures, browser, tokens } = context
   const { artboards } = await readArtboards(paper, fileId, page)
   const differences = []
-  for (const { sidecar } of captures) {
+  for (const { sidecar, html } of captures) {
     const found = await verifyFrame(paper, fileId, {
       artboards,
       browser,
       tokens,
       sidecar,
+      html,
       outFolder,
     })
     differences.push(...found.map((text) => `${sidecar.name}: ${text}`))
