@@ -42,6 +42,7 @@ const pageOptions = {
   viewport: { width: 1280, height: 800 },
   deviceScaleFactor: 2,
 }
+const captureDay = new Date("2026-11-19T12:00:00Z")
 const longestAwaitedTimer = 1000
 const noMotion =
   "*, *::before, *::after { transition: none !important; animation: none !important; }"
@@ -221,14 +222,28 @@ const waitUntilSettled = async () => {
   return !hasChanged && !isWorking()
 }
 
+// At a device scale of 2 Chromium composites a scroller in its own layer,
+// which antialiases rounded edges unlike the clipped box Paper stores.
 const launchBrowser = (options) =>
-  chromium.launch({ ...options, args: ["--font-render-hinting=none"] })
+  chromium.launch({
+    ...options,
+    args: [
+      "--font-render-hinting=none",
+      "--disable-prefer-compositing-to-lcd-text",
+    ],
+  })
+
+const openPage = async (browser) => {
+  const page = await browser.newPage(pageOptions)
+  await page.clock.setFixedTime(captureDay)
+  return page
+}
 
 const captureFrame = async (
   browser,
   { name, root, stylesheets, mount, tokens, inspect }
 ) => {
-  const page = await browser.newPage(pageOptions)
+  const page = await openPage(browser)
   const blocked = new Set()
   try {
     await blockOtherOrigins(page, origin, blocked)
@@ -423,7 +438,7 @@ export {
   captureFrame,
   launchBrowser,
   noMotion,
-  pageOptions,
+  openPage,
   readCommit,
   renderEmitted,
   saveCapture,

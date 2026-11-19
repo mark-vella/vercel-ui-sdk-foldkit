@@ -8,11 +8,15 @@ import { createBindings } from "./flatten/bindings.mjs"
 import { createCalcBinder } from "./flatten/calc.mjs"
 import { createControlText, createPseudoReader } from "./flatten/children.mjs"
 import { createComparison } from "./flatten/compare.mjs"
+import { lineAsBlock } from "./flatten/inline.mjs"
+import { createLayers, toLayerDeclarations } from "./flatten/layers.mjs"
 import { createLayout } from "./flatten/layout.mjs"
 import { createRecords } from "./flatten/records.mjs"
 import { createSvgReader } from "./flatten/svg.mjs"
+import { createTables } from "./flatten/table.mjs"
+import { recordTextDrawing } from "./flatten/text.mjs"
 import { readTree } from "./flatten/tree.mjs"
-import { createUsedValues } from "./flatten/used-values.mjs"
+import { createUsedValues, toPaperLength } from "./flatten/used-values.mjs"
 import {
   backgroundLonghands,
   boxProperties,
@@ -118,9 +122,15 @@ const readFrame = (
   })
   const svgs = helpers.createSvgReader({ comparison, record, round })
   const layout = helpers.createLayout({ comparison })
+  const layers = helpers.createLayers({
+    frame,
+    tokens,
+    toLength: helpers.toPaperLength,
+  })
   const {
     recordDropped,
     recordAbsolute,
+    recordBehindParent,
     recordDisplay,
     recordInlineBoxes,
     recordTextGrid,
@@ -128,8 +138,10 @@ const readFrame = (
   } = helpers.createRecords({
     record,
     isAtRest: layout.isAtRest,
+    holdsOwnSize: layout.holdsOwnSize,
+    holdsContentBox: layout.holdsContentBox,
+    isScrolledAside: layers.isScrolledAside,
     emitted,
-    insets,
     movesOrTurnsSource,
     backgroundLonghands,
     isHeldBackground: helpers.isHeldBackground,
@@ -140,9 +152,22 @@ const readFrame = (
     widgetInputs,
     comparison,
     keepLayer: svgs.keepLayer,
+    lineAsBlock: helpers.lineAsBlock,
+    toPaperLength: helpers.toPaperLength,
   })
+  const tables = helpers.createTables({
+    frame,
+    tokens,
+    toPaperLength: helpers.toPaperLength,
+  })
+  tables.translate()
   const readControl = helpers.createControlText({ frame, record, widgetInputs })
-  const readPseudos = helpers.createPseudoReader({ record, paintsNothing })
+  const readPseudos = helpers.createPseudoReader({
+    record,
+    paintsNothing,
+    recordDropped,
+    enter: comparison.enter,
+  })
   const { tree, elements } = helpers.readTree({
     frame,
     record,
@@ -156,6 +181,7 @@ const readFrame = (
     recordDisplay,
     recordInlineBoxes,
     recordTextGrid,
+    keepLayer: svgs.keepLayer,
   })
 
   const real = bindings.read(elements)
@@ -164,15 +190,23 @@ const readFrame = (
   svgs.bind(bindings)
 
   const { usedLineHeight, pinStaticPosition, pinUsedSize } =
-    helpers.createUsedValues({ frame, round })
+    helpers.createUsedValues({
+      frame,
+      round,
+      toPaperLength: helpers.toPaperLength,
+    })
   const calc = helpers.createCalcBinder({ frame, tokens, computedProperties })
   const colorPattern = new RegExp(colorSource, "g")
   const colors = {}
   elements.forEach((entry, index) => {
     entry.styles = {}
     for (const property of Object.keys(real[index])) {
+      const pseudo = textProperties.includes(property)
+        ? (entry.textPseudo ?? entry.pseudo)
+        : entry.pseudo
       const decided = calc.bind(
         entry.element,
+        pseudo,
         property,
         bindings.decide(
           real[index][property],
@@ -183,7 +217,7 @@ const readFrame = (
       // Chromium floors a unitless line height to 1/64 px, and rounds a length.
       if (property === "line-height" && decided.tokens.length === 0) {
         decided.value =
-          usedLineHeight(entry.element, decided.value) ?? decided.value
+          usedLineHeight(entry.element, pseudo, decided.value) ?? decided.value
       }
       entry.styles[property] = decided
       for (const [color] of decided.value.matchAll(colorPattern)) {
@@ -194,17 +228,21 @@ const readFrame = (
       }
     }
     for (const [property, value] of Object.entries(entry.layout ?? {})) {
-      entry.styles[property] = { value, tokens: [] }
+      const unbound = entry.styles[property]?.tokens.length > 0
+      entry.styles[property] = { value, tokens: [], unbound }
     }
     const parent = entry.parent?.element ?? frame.parentElement
     layout.dropInheritedDirection(entry, parent)
     layout.pinScroll(entry)
+    layout.pinBox(entry, record)
     const isZIndexIgnored =
       entry.styles.position.value === "static" &&
       !/flex|grid/.test(getComputedStyle(parent).display)
     if (isZIndexIgnored) {
       entry.styles["z-index"] = { value: "auto", tokens: [] }
     }
+    recordBehindParent(entry, parent)
+    layers.place(entry)
     if (entry.styles.position.value === "absolute") {
       pinStaticPosition(entry)
     }
@@ -214,6 +252,8 @@ const readFrame = (
     delete entry.element
     delete entry.parent
   })
+  layout.pinLegendMargins()
+  tables.restore()
   probe.remove()
   comparison.remove()
   return { tree, colors, unsupported }
@@ -227,12 +267,16 @@ const pageFunctions = {
   createCalcBinder,
   createComparison,
   createControlText,
+  lineAsBlock,
+  createLayers,
   createPseudoReader,
   createLayout,
   createRecords,
   createSvgReader,
+  createTables,
   readTree,
   createUsedValues,
+  toPaperLength,
   readFrame,
 }
 
@@ -300,7 +344,10 @@ const flattenFrame = async (page, tokens) => {
     if (node.name) {
       layers.push({ layer: node.path, kind: node.kind, ...node.size })
     }
-    const declarations = toDeclarations(node).map((declaration) => ({
+    const declarations = [
+      ...toDeclarations(node),
+      ...toLayerDeclarations(node),
+    ].map((declaration) => ({
       ...declaration,
       value: toPaperValue(declaration.value),
       colors: new Set(
@@ -329,6 +376,7 @@ const flattenFrame = async (page, tokens) => {
 
   const html = render(tree)
   const [frame] = layers
+  unsupported.push(...(await recordTextDrawing(page, frame)))
   return {
     html,
     frame: { width: frame.width, height: frame.height },

@@ -263,19 +263,6 @@ describe("position", () => {
       /position: absolute; top: 0px; left: 10px$/
     )
   })
-
-  test("is recorded on an absolute box placed against an ancestor other than its parent", async () => {
-    const result = await capture(
-      `<div data-slot="outer" style="position: relative; display: flex"><div data-slot="inner" style="display: flex"><div data-slot="dot" style="position: absolute; top: 0; left: 0; width: 4px; height: 4px; background-color: var(--ink)"></div></div></div>`
-    )
-    assert.deepEqual(result.unsupported, [
-      {
-        layer: layerPath("outer > inner > dot"),
-        property: "containing block",
-        value: "outer",
-      },
-    ])
-  })
 })
 
 describe("sizes", () => {
@@ -399,9 +386,15 @@ describe("text", () => {
           "flex-shrink: 1; width: 120px; font-family: Geist, system-ui, sans-serif; line-height: 20px; text-wrap-style: balance",
         link: "color: var(--ink); font-family: Geist, system-ui, sans-serif; line-height: 20px; text-decoration-line: underline; text-decoration-color: var(--line); text-decoration-thickness: auto; text-underline-offset: 4px",
         plain:
-          "color: var(--ink); font-family: Geist, system-ui, sans-serif; line-height: 20px; text-decoration-line: underline; text-decoration-thickness: auto",
+          "color: var(--ink); font-family: Geist, system-ui, sans-serif; line-height: 20px; text-decoration-line: underline; text-decoration-thickness: auto; text-underline-position: from-font",
         bindings: ["color --ink", "text-decoration-color --line"],
-        unsupported: [],
+        unsupported: [
+          {
+            layer: "fixture/case",
+            property: "text-underline-position",
+            value: "auto in 37x2 at 24,206",
+          },
+        ],
         offline: [],
       }
     )

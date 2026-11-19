@@ -129,7 +129,7 @@ test("records each value the catalogue declares for a property it neither emits 
         .map((value) => ({ property, value }))
     )
   let changed
-  const { unsupported } = await captureFrame(browser, {
+  const { unsupported, html } = await captureFrame(browser, {
     name: "fixture/case",
     root: repo,
     stylesheets: ["/examples/styles/tokens.css"],
@@ -138,12 +138,18 @@ test("records each value the catalogue declares for a property it neither emits 
     },
     tokens,
   })
+  const isEmitted = ({ slot, property, value }) =>
+    html
+      .match(new RegExp(`<div layer-name="${slot}" style="([^"]*)"`))?.[1]
+      .split("; ")
+      .includes(`${property}: ${value}`)
   const unrecorded = changed.filter(
-    ({ slot, property }) =>
+    (change) =>
+      !isEmitted(change) &&
       !unsupported.some(
         (entry) =>
-          entry.layer === `fixture/case > preview > ${slot}` &&
-          property.startsWith(entry.property)
+          entry.layer === `fixture/case > preview > ${change.slot}` &&
+          change.property.startsWith(entry.property)
       )
   )
   assert.ok(changed.length > 30, `${changed.length} declared values apply`)

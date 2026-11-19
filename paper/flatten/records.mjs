@@ -1,8 +1,10 @@
 const createRecords = ({
   record,
   isAtRest,
+  holdsOwnSize,
+  holdsContentBox,
+  isScrolledAside,
   emitted,
-  insets,
   movesOrTurnsSource,
   backgroundLonghands,
   isHeldBackground,
@@ -13,8 +15,16 @@ const createRecords = ({
   widgetInputs,
   comparison,
   keepLayer,
+  lineAsBlock,
+  toPaperLength,
 }) => {
   const movesOrTurns = new RegExp(movesOrTurnsSource)
+  const corners = [
+    "borderTopLeftRadius",
+    "borderTopRightRadius",
+    "borderBottomRightRadius",
+    "borderBottomLeftRadius",
+  ]
   const emittedDisplay = (display) => {
     const layout = display.replace(/^inline-/, "")
     return ["flex", "grid"].includes(layout) ? layout : "block"
@@ -27,7 +37,20 @@ const createRecords = ({
         : node.scrollHeight > node.clientHeight
     return value === "scroll" || (value === "auto" && overflows)
   }
+  const changesNoPaint = (property) =>
+    property === "overlay" ||
+    property === "interactivity" ||
+    property.startsWith("scroll-snap-")
   const isEmittedBy = (hasText) => (property, style, node) => {
+    if (changesNoPaint(property)) {
+      return true
+    }
+    if (property === "clip-path") {
+      return style.clipPath === "inset(50%)"
+    }
+    if (property === "content-visibility") {
+      return style.contentVisibility === "hidden"
+    }
     if (!emitted.has(property)) {
       return false
     }
@@ -39,11 +62,19 @@ const createRecords = ({
       // inside, which never carries it.
       return hasText
     }
-    if (property === "position" || insets.includes(property)) {
-      return style.position !== "fixed"
-    }
     if (property === "overflow-x" || property === "overflow-y") {
-      return !scrolls(node, property) || isAtRest(node)
+      if (!scrolls(node, property)) {
+        return true
+      }
+      // Chromium antialiases a rounded scroller's background unlike the
+      // clipped box Paper stores.
+      const isRoundedWithBackground =
+        (style.backgroundColor !== "rgba(0, 0, 0, 0)" ||
+          style.backgroundImage !== "none") &&
+        corners.some((corner) => parseFloat(style[corner]) > 0)
+      return (
+        !isRoundedWithBackground && (isAtRest(node) || isScrolledAside(node))
+      )
     }
     if (property === "transform") {
       return movesOrTurns.test(node.computedStyleMap().get(property))
@@ -61,6 +92,9 @@ const createRecords = ({
       record(path, property, value)
     }
     const style = getComputedStyle(node)
+    if (hasText && comparison.fallsBackApart(node)) {
+      record(path, "font fallback", style.fontFamily)
+    }
     const rewrittenSpaces = rewrittenGradientSpaces(style)
     if (rewrittenSpaces.length > 0 && isHeldBackground(style)) {
       record(path, "gradient", `in ${rewrittenSpaces.join(", in ")}`)
@@ -71,6 +105,7 @@ const createRecords = ({
     }
     const isSizedAsContentBox =
       style.boxSizing === "content-box" &&
+      !holdsContentBox(node) &&
       comparison.bindsSize(node, "box-sizing", "border-box")
     if (isSizedAsContentBox) {
       record(path, "box-sizing", "content-box")
@@ -85,17 +120,19 @@ const createRecords = ({
     // the legend's own width.
     const isRenderedLegend =
       node.parentElement?.localName === "fieldset" &&
-      node === node.parentElement.querySelector(":scope > legend")
+      node === node.parentElement.querySelector(":scope > legend") &&
+      !comparison.legendFitOf(node.parentElement)
     if (drawsItself || isRenderedLegend) {
       const element = isWidgetInput ? `input type=${node.type}` : node.localName
       record(path, "element", element)
     } else if (node.localName !== "div") {
-      const { width, height } = comparison.resizesAsDiv(
-        node,
-        emittedDisplay(style.display)
-      )
+      const display = emittedDisplay(style.display)
+      const { width, height } = comparison.resizesAsDiv(node, display)
       const change = width && height ? "size" : width ? "width" : "height"
-      if (width || height) {
+      if (
+        (width || height) &&
+        !holdsOwnSize(node, display, { width, height })
+      ) {
         record(path, "element", `${node.localName} ${change}`)
       }
     }
@@ -116,20 +153,22 @@ const createRecords = ({
         style.getPropertyValue(`border-${side}-style`) === "none" ||
         parseFloat(style.getPropertyValue(`border-${side}-width`)) === 0
     )
-  const recordAbsolute = (node, path, children, contextElement) => {
-    const { offsetParent } = node
-    if (offsetParent !== contextElement) {
-      record(
-        path,
-        "containing block",
-        offsetParent?.dataset.slot ?? offsetParent?.localName ?? "viewport"
-      )
-    }
+  const isBlank = (child) =>
+    "element" in child &&
+    paintsNothing(getComputedStyle(child.element, child.pseudo)) &&
+    child.children.every(isBlank)
+  const recordAbsolute = (node, path, children) => {
     const style = getComputedStyle(node)
+    const isBlankInside = children.every(isBlank) && paintsNothing(style)
+    // Chromium paints a fixed box in its own compositing layer, which
+    // antialiases its edges unlike the absolute box Paper stores.
+    if (style.position === "fixed" && !isBlankInside) {
+      record(path, "position", "fixed")
+    }
     // Paper deletes an absolute layer at no opacity, whatever it holds.
     if (style.opacity === "0") {
       record(path, "empty layer", "opacity 0")
-    } else if (children.length === 0 && paintsNothing(style)) {
+    } else if (isBlankInside) {
       children.push(keepLayer(path))
     }
   }
@@ -159,7 +198,9 @@ const createRecords = ({
     }
   }
   const recordInlineBoxes = (entry, parent) => {
-    const boxes = entry.children.filter((child) => "element" in child)
+    const boxes = entry.children.filter(
+      (child) => "element" in child && !child.pseudo
+    )
     const container = [parent, entry.element]
     const recordBoxes = () => {
       for (const box of boxes) {
@@ -173,11 +214,23 @@ const createRecords = ({
         }
         const fit = `display: ${emittedDisplay(display)}; width: fit-content`
         const measured = [...container, ...others, ...elementsOf(box.children)]
-        const isFitted =
-          sizesOf(measured) ===
-          comparison.withStyle(box.element, fit, () => sizesOf(measured))
-        if (isFitted) {
+        const fits = (candidate, elements) =>
+          sizesOf(elements) ===
+          comparison.withStyle(box.element, candidate, () => sizesOf(elements))
+        if (fits(fit, measured)) {
           box.fit = fit
+          continue
+        }
+        const line = lineAsBlock(
+          box,
+          entry,
+          emittedDisplay(display),
+          (style, isResized) =>
+            fits(style, isResized ? measured : [...measured, box.element]),
+          toPaperLength
+        )
+        if (line) {
+          Object.assign(box, line)
         } else {
           record(box.path, "display", `${display} in a block`)
         }
@@ -204,8 +257,12 @@ const createRecords = ({
       display: display.replace("grid", "flex"),
       "justify-content": justifyItems,
       "align-items": alignItems,
+      "align-content": "normal",
     }
-    const block = { display: display.replace("grid", "block") }
+    const block = {
+      display: display.replace("grid", "block"),
+      "align-content": "normal",
+    }
     const isFlexAligned =
       flexAlignments.includes(justifyItems) &&
       flexAlignments.includes(alignItems)
@@ -229,9 +286,42 @@ const createRecords = ({
       record(entry.path, "display", `${display} with only text`)
     }
   }
+  const formsStackingContext = (element) => {
+    const style = getComputedStyle(element)
+    const isItem = /flex|grid/.test(
+      getComputedStyle(element.parentElement).display
+    )
+    return (
+      (style.zIndex !== "auto" && (style.position !== "static" || isItem)) ||
+      ["fixed", "sticky"].includes(style.position) ||
+      Number(style.opacity) < 1 ||
+      style.isolation === "isolate" ||
+      style.mixBlendMode !== "normal" ||
+      /paint|layout|strict|content/.test(style.contain) ||
+      [
+        style.transform,
+        style.translate,
+        style.rotate,
+        style.scale,
+        style.filter,
+        style.backdropFilter,
+        style.clipPath,
+        style.maskImage,
+      ].some((value) => value !== "none")
+    )
+  }
+  // Paper drops z-index, so a layer below zero paints over its parent, where
+  // the browser paints it under the parent's background.
+  const recordBehindParent = ({ path, styles }, parent) => {
+    const zIndex = styles["z-index"].value
+    if (Number(zIndex) < 0 && !formsStackingContext(parent)) {
+      record(path, "z-index", zIndex)
+    }
+  }
   return {
     recordDropped,
     recordAbsolute,
+    recordBehindParent,
     recordDisplay,
     recordInlineBoxes,
     recordTextGrid,

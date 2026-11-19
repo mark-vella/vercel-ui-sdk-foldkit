@@ -51,16 +51,11 @@ describe("a pseudo-element", () => {
     assert.deepEqual(recorded(result), [])
     assert.match(
       result.html,
-      /<\/div><div style="flex-shrink: 1; width: 0px; height: var\(--space-3\)"><\/div><\/div>/
+      /<\/div><div style="flex-shrink: 1; height: var\(--space-3\)"><\/div><\/div>/
     )
   })
 
   const recordedCases = [
-    [
-      "paints",
-      `content: ""; position: absolute; inset: 0; background: var(--ink)`,
-    ],
-    ["holds text", `content: "Step "; display: block`],
     ["shows a counter", `content: counter(item); display: block`],
     [
       "sits in a line of text",

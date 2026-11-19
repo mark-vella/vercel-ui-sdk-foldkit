@@ -11,6 +11,7 @@ const readTree = ({
   recordDisplay,
   recordInlineBoxes,
   recordTextGrid,
+  keepLayer,
 }) => {
   const elements = []
   const visit = (node, parent) => {
@@ -48,14 +49,17 @@ const readTree = ({
       textPseudo: control?.textPseudo,
       layout: control?.layout,
     }
-    const [before, after] = readPseudos(node, entry)
+    const isSkipped = style.contentVisibility === "hidden"
+    const [before, after] = isSkipped ? [] : readPseudos(node, entry)
     const pseudos = [before, after].filter(Boolean)
-    const children = [
-      before,
-      ...(control?.children ??
-        [...node.childNodes].flatMap((child) => visit(child, entry))),
-      after,
-    ].filter(Boolean)
+    const children = isSkipped
+      ? [keepLayer(path)]
+      : [
+          before,
+          ...(control?.children ??
+            [...node.childNodes].flatMap((child) => visit(child, entry))),
+          after,
+        ].filter(Boolean)
     if (children.length === 1 && "text" in children[0]) {
       children[0].text = children[0].text.trim()
     }
@@ -73,7 +77,16 @@ const readTree = ({
     const holdsTextApart =
       style.whiteSpaceCollapse === "collapse" &&
       (isFlexOrGrid || (isBlockFlow && hasText && children.every(isOwnBlock)))
-    if (hasText && hasElements && !holdsTextApart) {
+    const isInFlow = (child) =>
+      !["absolute", "fixed"].includes(
+        "element" in child
+          ? getComputedStyle(child.element, child.pseudo).position
+          : child.styles?.position.value
+      )
+    const hasFlowElements = children.some(
+      (child) => !("text" in child) && isInFlow(child)
+    )
+    if (hasText && hasFlowElements && !holdsTextApart) {
       record(path, "children", "text and elements")
     }
     const hasSupportedLayout = isBlockFlow || isFlexOrGrid
@@ -86,8 +99,8 @@ const readTree = ({
     }
     enter(contextElement)
     recordDropped(node, path, hasText)
-    if (style.position === "absolute") {
-      recordAbsolute(node, path, children, contextElement)
+    if (/^(absolute|fixed)$/.test(style.position)) {
+      recordAbsolute(node, path, children)
     }
     Object.assign(entry, { hasText, children })
     elements.push(entry, ...pseudos)

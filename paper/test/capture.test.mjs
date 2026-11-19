@@ -64,6 +64,25 @@ describe("the capture page", () => {
     assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-/)
   })
 
+  test("shows the same day whatever day it runs, and its timers still run", async () => {
+    let day
+    await captureFrame(browser, {
+      name: "fixture/case",
+      root: repo,
+      stylesheets: ["/examples/styles/tokens.css"],
+      mount: async (page) => {
+        day = await page.evaluate(
+          () =>
+            new Promise((resolve) =>
+              setTimeout(() => resolve(new Date().toISOString()), 50)
+            )
+        )
+      },
+      tokens,
+    })
+    assert.equal(day, "2026-11-19T12:00:00.000Z")
+  })
+
   test("gives the example the docs' content width", async () => {
     const result = await capture(`<div data-slot="x">Text</div>`)
     assert.equal(layer(result, "fixture/case > preview").width, 512)
@@ -407,18 +426,18 @@ describe("token binding", () => {
 
   test("keeps the real colour of a color-mix() part in a composite value", async () => {
     const result = await capture(
-      `<div data-slot="ring" style="box-shadow: 0 0 0 1px var(--line), inset 0 0 0 2px color-mix(in oklab, var(--ink) 10%, transparent)"></div>`
+      `<div data-slot="ring" style="box-shadow: 0 0 0 1px var(--line), inset 0 0 0 2px color-mix(in oklab, var(--ink) 10%, var(--paper))"></div>`
     )
     assert.equal(
       elementTag(result, "ring"),
-      `<div layer-name="ring" style="box-shadow: var(--line) 0px 0px 0px 1px, rgb(23 23 23 / 10%) 0px 0px 0px 2px inset">`
+      `<div layer-name="ring" style="box-shadow: var(--line) 0px 0px 0px 1px, rgb(229 229 229) 0px 0px 0px 2px inset">`
     )
     assert.deepEqual(result.unbound, [
       {
         layer: layerPath("ring"),
         property: "box-shadow",
         value:
-          "var(--line) 0px 0px 0px 1px, rgb(23 23 23 / 10%) 0px 0px 0px 2px inset",
+          "var(--line) 0px 0px 0px 1px, rgb(229 229 229) 0px 0px 0px 2px inset",
       },
     ])
   })
@@ -522,8 +541,8 @@ describe("what the flattener does not emit", () => {
   const cases = [
     [
       "position: fixed",
-      `style="display: flex; position: fixed; top: 5px"`,
-      ["position", "top"],
+      `style="display: flex; position: fixed; top: 5px; background-color: var(--ink)"`,
+      ["position"],
     ],
     [
       "a transform that scales",
@@ -546,11 +565,13 @@ describe("what the flattener does not emit", () => {
     })
   }
 
-  test("records a painting pseudo-element", async () => {
+  test("records what a painting pseudo-element does not emit", async () => {
     const result = await capture(
-      `<style>[data-slot="x"]::before { content: ""; width: 4px; height: 4px; background: red }</style><div data-slot="x" style="display: flex"></div>`
+      `<style>[data-slot="x"]::before { content: ""; width: 4px; height: 4px; background: red; mask-image: linear-gradient(red, transparent) }</style><div data-slot="x" style="display: flex"></div>`
     )
-    assert.deepEqual(unsupportedAt(result, layerPath("x")), ["::before"])
+    assert.deepEqual(unsupportedAt(result, `${layerPath("x")} > ::before`), [
+      "mask-image",
+    ])
   })
 
   test("records a masked input's value", async () => {
@@ -657,14 +678,13 @@ describe("what the flattener does not emit", () => {
       `<div data-slot="line"><span data-slot="x" style="display: inline-block; vertical-align: middle">Icon</span></div>`
     )
     assert.deepEqual(unsupportedAt(result, layerPath("line > x")), [
-      "display",
       "vertical-align",
     ])
   })
 
-  test("records content-box sizing only where border-box would change the box", async () => {
+  test("records a content-box percentage only where border-box would change the box", async () => {
     const result = await capture(
-      `<div data-slot="wide" style="box-sizing: content-box; width: 40px; height: 10px; padding-right: 8px"></div><div data-slot="tall" style="box-sizing: content-box; display: flex; min-height: 40px; padding: 4px"><div style="width: 8px; height: 8px"></div></div><div data-slot="plain" style="box-sizing: content-box; width: 40px; height: 10px"></div><div data-slot="padded" style="box-sizing: content-box; padding: 4px"><div style="width: 8px; height: 8px"></div></div>`
+      `<div data-slot="wide" style="box-sizing: content-box; width: 10%; height: 10px; padding-right: 8px"></div><div data-slot="tall" style="box-sizing: content-box; display: flex; min-width: 10%; padding: 4px"><div style="width: 8px; height: 8px"></div></div><div data-slot="plain" style="box-sizing: content-box; width: 40px; height: 10px"></div><div data-slot="padded" style="box-sizing: content-box; padding: 4px"><div style="width: 8px; height: 8px"></div></div>`
     )
     assert.deepEqual(result.unsupported, [
       {
@@ -682,7 +702,7 @@ describe("what the flattener does not emit", () => {
 
   test("records an inline child of a block only where a block would lay it out differently", async () => {
     const result = await capture(
-      `<div data-slot="line" style="width: 200px"><span data-slot="time" style="line-height: 20px">Time</span></div><div data-slot="fits" style="line-height: 20px"><span data-slot="button" style="display: inline-flex">Go</span></div>`
+      `<div data-slot="line" style="width: 60px"><span data-slot="time" style="line-height: 20px">Time to ship it</span></div><div data-slot="fits" style="line-height: 20px"><span data-slot="button" style="display: inline-flex">Go</span></div>`
     )
     assert.deepEqual(result.unsupported, [
       {
@@ -695,7 +715,7 @@ describe("what the flattener does not emit", () => {
 
   test("records an element whose own tag sizes it unlike the div it becomes", async () => {
     const result = await capture(
-      `<div data-slot="menu" style="width: 200px"><button data-slot="trigger" style="display: inline-flex">Go</button></div><div data-slot="labels" style="width: 200px"><span data-slot="label" style="display: block">Text</span><a data-slot="link" style="display: flex">Link</a></div>`
+      `<div data-slot="menu" style="width: 200px"><button data-slot="trigger" style="display: inline-block; height: 40px; padding: 0; border: 0">Go</button></div><div data-slot="labels" style="width: 200px"><span data-slot="label" style="display: block">Text</span><a data-slot="link" style="display: flex">Link</a></div>`
     )
     assert.deepEqual(result.unsupported, [
       {
@@ -708,7 +728,7 @@ describe("what the flattener does not emit", () => {
 
   test("measures an element's tag with its children styled as on the page", async () => {
     const result = await capture(
-      `<style>ul > li { padding-block: 6px }</style><ul data-slot="list" style="margin: 0; padding: 0; list-style: none"><li><div>One</div></li><li><div>Two</div></li></ul><div data-slot="menu" style="width: 200px"><button data-slot="trigger" style="display: inline-flex">Go</button></div>`
+      `<style>ul > li { padding-block: 6px }</style><ul data-slot="list" style="margin: 0; padding: 0; list-style: none"><li><div>One</div></li><li><div>Two</div></li></ul><div data-slot="menu" style="width: 200px"><button data-slot="trigger" style="display: inline-block; height: 40px; padding: 0; border: 0">Go</button></div>`
     )
     assert.deepEqual(result.unsupported, [
       {
@@ -783,13 +803,18 @@ describe("what the flattener does not emit", () => {
 
   test("records a fieldset's legend, which lays itself out", async () => {
     const result = await capture(
-      `<fieldset style="display: flex; margin: 0; padding: 0; border: 0"><legend data-slot="x" style="padding: 0">Title</legend></fieldset>`
+      `<fieldset style="display: flex; margin: 0; padding: 0; border: 0"><legend data-slot="x" style="padding: 0">Title</legend><div style="width: 20px; height: 20px"></div></fieldset>`
     )
     assert.deepEqual(result.unsupported, [
       {
         layer: layerPath("fieldset > x"),
         property: "element",
         value: "legend",
+      },
+      {
+        layer: layerPath("fieldset"),
+        property: "element",
+        value: "fieldset size",
       },
     ])
   })

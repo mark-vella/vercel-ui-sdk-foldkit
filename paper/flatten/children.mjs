@@ -51,7 +51,7 @@ const createControlText = ({ frame, record, widgetInputs }) => {
     }
     const textPseudo = node.value ? undefined : "::placeholder"
     const style = getComputedStyle(node, textPseudo)
-    const isPlainText = /^\S+( \S+)*$/.test(shown)
+    const isPlainText = /^[^ \t\n\r\f]+( [^ \t\n\r\f]+)*$/.test(shown)
     const isTranslated =
       isPlainText &&
       ((isInput &&
@@ -76,20 +76,48 @@ const createControlText = ({ frame, record, widgetInputs }) => {
   return readControl
 }
 
-const createPseudoReader = ({ record, paintsNothing }) => {
+const createPseudoReader = ({
+  record,
+  paintsNothing,
+  recordDropped,
+  enter,
+}) => {
   const isUnseen = (style) =>
     ["none", "normal"].includes(style.content) ||
     style.display === "none" ||
     (style.content === '""' &&
       ["absolute", "fixed"].includes(style.position) &&
       paintsNothing(style))
-  const isSpacer = (style, hostStyle) =>
-    style.content === '""' &&
-    paintsNothing(style) &&
-    style.backdropFilter === "none" &&
+  const textOf = ({ content }) =>
+    /^"[^"\\]*"$/.test(content) ? content.slice(1, -1) : null
+  const isTranslated = (node, style, hostStyle) =>
+    textOf(style) !== null &&
+    !node.shadowRoot &&
     style.float === "none" &&
-    ["static", "relative"].includes(style.position) &&
     (!style.display.startsWith("inline") || /flex|grid/.test(hostStyle.display))
+  const recordPainted = (node, pseudo, path, text) => {
+    const style = getComputedStyle(node, pseudo)
+    const copy = document.createElement("div")
+    for (const property of style) {
+      if (property !== "content") {
+        copy.style.setProperty(
+          property,
+          style.getPropertyValue(property),
+          "important"
+        )
+      }
+    }
+    copy.textContent = text
+    const hidden = document.head.appendChild(document.createElement("style"))
+    hidden.textContent = `[data-paper-pseudo]${pseudo} { display: none !important }`
+    node.setAttribute("data-paper-pseudo", "")
+    node[pseudo === "::before" ? "prepend" : "append"](copy)
+    enter(node)
+    recordDropped(copy, path, text !== "")
+    copy.remove()
+    node.removeAttribute("data-paper-pseudo")
+    hidden.remove()
+  }
   const readPseudos = (node, entry) => {
     const hostStyle = getComputedStyle(node)
     return ["::before", "::after"].map((pseudo) => {
@@ -97,19 +125,24 @@ const createPseudoReader = ({ record, paintsNothing }) => {
       if (isUnseen(style)) {
         return null
       }
-      if (!isSpacer(style, hostStyle)) {
+      if (!isTranslated(node, style, hostStyle)) {
         record(entry.path, pseudo, style.content)
         return null
       }
+      const text = textOf(style)
+        .replace(/[ \t\n\r\f]+/g, " ")
+        .replace(/^ | $/g, "")
+      const path = `${entry.path} > ${pseudo}`
+      recordPainted(node, pseudo, path, text)
       return {
         element: node,
         pseudo,
         parent: entry,
         name: null,
         kind: "slot",
-        path: `${entry.path} > ${pseudo}`,
-        hasText: false,
-        children: [],
+        path,
+        hasText: text !== "",
+        children: text === "" ? [] : [{ text }],
       }
     })
   }

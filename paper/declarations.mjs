@@ -312,6 +312,15 @@ const toDeclarations = ({ kind, styles, hasText, children, fit }) => {
         if (styles["text-decoration-line"].value !== "none") {
           add(property, [styles[property]])
         }
+      } else if (property === "text-underline-offset") {
+        addKept(property)
+        // Paper places an underline with no offset from the font.
+        const isPlacedByPaper =
+          styles["text-decoration-line"].value.includes("underline") &&
+          styles[property].value === "auto"
+        if (isPlacedByPaper) {
+          add("text-underline-position", [], "from-font")
+        }
       } else if (
         property !== "text-decoration-color" ||
         !isDecorationColorImplied

@@ -143,6 +143,37 @@ const createBindings = ({
     return current ? [...parts, current] : parts
   }
   const joinParts = (parts) => parts.join(" ").replaceAll(" ,", ",")
+  // Paper keeps a token mixed with transparent only when the token comes
+  // first, and stores it without its colour space, which defaults to oklab.
+  const mixedWithTransparent = (color, percent) =>
+    serialize("color", `color-mix(in oklab, ${color} ${percent}, transparent)`)
+  const colorIndexes = tokens.flatMap(({ type }, index) =>
+    type === "color" ? [index] : []
+  )
+  const mixedAt = (realPart, firstPart, secondPart) => {
+    const alpha = Number(firstPart.match(/ \/ ([\d.]+)\)$/)?.[1])
+    if (!(alpha > 0 && alpha < 1)) {
+      return null
+    }
+    const percent = `${Number((alpha * 100).toFixed(3))}%`
+    const index = colorIndexes.find(
+      (index) =>
+        mixedWithTransparent(first[index].value, percent) === firstPart &&
+        mixedWithTransparent(second[index].value, percent) === secondPart &&
+        mixedWithTransparent(
+          resolvedTokens.get(tokens[index].name),
+          percent
+        ) === realPart
+    )
+    if (index === undefined) {
+      return null
+    }
+    const { name } = tokens[index]
+    return {
+      name,
+      value: `color-mix(in oklab, var(${name}) ${percent}, transparent)`,
+    }
+  }
 
   const decide = (real, [markedFirst, markedSecond, markedDirect]) => {
     if (real === markedFirst && real === markedSecond) {
@@ -182,6 +213,11 @@ const createBindings = ({
       if (name) {
         found.push(name)
         return `var(${name})`
+      }
+      const mixed = mixedAt(part, firstParts[index], secondParts[index])
+      if (mixed) {
+        found.push(mixed.name)
+        return mixed.value
       }
       const dependsOnToken =
         firstParts[index] !== part || secondParts[index] !== part

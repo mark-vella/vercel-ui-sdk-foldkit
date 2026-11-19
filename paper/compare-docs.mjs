@@ -12,7 +12,7 @@ import {
   captureExamples,
   launchBrowser,
   noMotion,
-  pageOptions,
+  openPage,
 } from "./capture.mjs"
 import { captionsIn } from "./census.mjs"
 
@@ -168,7 +168,7 @@ const measureDocs = async (browser, url, examples) => {
   const byPage = Map.groupBy(examples, ([, page]) => page)
   const measured = new Map()
   for (const [docsPage, entries] of byPage) {
-    const page = await browser.newPage(pageOptions)
+    const page = await openPage(browser)
     try {
       await blockOtherOrigins(page, url)
       await page.goto(`${url}/docs/web-components/components/${docsPage}`, {

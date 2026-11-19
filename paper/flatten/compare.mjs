@@ -40,19 +40,28 @@ const createComparison = ({
       host.style.setProperty(property, isCurrentColor ? "currentcolor" : value)
     }
   }
-  const withStyle = (node, declaration, measure) => {
-    const authored = node.getAttribute("style")
+  const withStyles = (declarations, measure) => {
+    const authored = declarations.map(([node]) => node.getAttribute("style"))
     // Chromium writes CSSOM edits back to the attribute lazily, which leaves
     // style="" in an svg's outerHTML after removeAttribute.
-    node.setAttribute("style", `${authored ?? ""}; ${declaration} !important`)
+    declarations.forEach(([node, declaration], index) => {
+      node.setAttribute(
+        "style",
+        `${authored[index] ?? ""}; ${declaration} !important`
+      )
+    })
     const measured = measure()
-    if (authored === null) {
-      node.removeAttribute("style")
-    } else {
-      node.setAttribute("style", authored)
-    }
+    declarations.forEach(([node], index) => {
+      if (authored[index] === null) {
+        node.removeAttribute("style")
+      } else {
+        node.setAttribute("style", authored[index])
+      }
+    })
     return measured
   }
+  const withStyle = (node, declaration, measure) =>
+    withStyles([[node, declaration]], measure)
   const sizeOf = (element) => {
     const { width, height } = element.getBoundingClientRect()
     return { width, height }
@@ -110,18 +119,31 @@ const createComparison = ({
     }
     return element
   }
-  const measureAsDiv = (node, display) => {
-    const own = withStyle(node, `display: ${display}`, () => sizeOf(node))
+  const layoutOf = (element) => {
+    const box = element.getBoundingClientRect()
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    const content = [...range.getClientRects()]
+      .map(({ x, y, width, height }) => [x - box.x, y - box.y, width, height])
+      .join()
+    return { width: box.width, height: box.height, content }
+  }
+  const measureAsDiv = (node, display, sizes = {}) => {
+    const own = withStyle(node, `display: ${display}`, () => layoutOf(node))
     const div = toDiv(node, display)
+    for (const [property, value] of Object.entries(sizes)) {
+      div.style.setProperty(property, value, "important")
+    }
     const asDiv = withStyle(node, "display: none", () => {
       node.after(div)
-      const size = sizeOf(div)
+      const layout = layoutOf(div)
       div.remove()
-      return size
+      return layout
     })
     return {
       width: own.width !== asDiv.width,
       height: own.height !== asDiv.height,
+      content: own.content !== asDiv.content,
     }
   }
   const sampleResizes = (tag, display) => {
@@ -171,6 +193,122 @@ const createComparison = ({
       ? measureAsDiv(node, display)
       : { width: false, height: false }
   }
+  const renderedLegend = (fieldset) => fieldset.querySelector(":scope > legend")
+  const childBoxes = (element) => {
+    const box = element.getBoundingClientRect()
+    return [...element.children]
+      .map((child) => {
+        const { x, y, width, height } = child.getBoundingClientRect()
+        return [x - box.x, y - box.y, width, height]
+      })
+      .concat([[box.width, box.height]])
+      .join()
+  }
+  const findLegendFit = (fieldset) => {
+    const legend = renderedLegend(fieldset)
+    const style = getComputedStyle(fieldset)
+    const isColumn =
+      /grid/.test(style.display) ||
+      (/flex/.test(style.display) && style.flexDirection === "column")
+    const gap = isColumn ? parseFloat(style.rowGap) || 0 : 0
+    const div = toDiv(fieldset, style.display)
+    const copied = renderedLegend(div)
+    copied.style.setProperty("width", "fit-content", "important")
+    copied.style.setProperty(
+      "margin-bottom",
+      `${parseFloat(getComputedStyle(legend).marginBottom) - gap}px`,
+      "important"
+    )
+    const asDiv = withStyle(fieldset, "display: none", () => {
+      fieldset.after(div)
+      const boxes = childBoxes(div)
+      div.remove()
+      return boxes
+    })
+    return asDiv === childBoxes(fieldset) ? { gap: gap !== 0 } : null
+  }
+  const legendFits = new Map()
+  const legendFitOf = (fieldset) => {
+    if (!renderedLegend(fieldset)) {
+      return null
+    }
+    if (!legendFits.has(fieldset)) {
+      legendFits.set(fieldset, findLegendFit(fieldset))
+    }
+    return legendFits.get(fieldset)
+  }
+  const ownSize = (node, display, changed) => {
+    if (node.localName === "fieldset") {
+      return legendFitOf(node) ? {} : undefined
+    }
+    const own = withStyle(node, `display: ${display}`, () => sizeOf(node))
+    const axes = ["width", "height"].filter((axis) => changed[axis])
+    const candidates = [
+      Object.fromEntries(axes.map((axis) => [axis, "fit-content"])),
+      Object.fromEntries(
+        axes.map((axis) => [axis, `${Math.ceil(own[axis] * 1000) / 1000}px`])
+      ),
+    ]
+    return candidates.find((sizes) => {
+      const { width, height, content } = measureAsDiv(node, display, sizes)
+      return !width && !height && !content
+    })
+  }
+  const containFit =
+    "contain: none !important; width: 0px !important; min-width: 100%"
+  const contained = new Set()
+  const holdsContain = (node) => {
+    const chain = []
+    for (let element = node; element; element = element.parentElement) {
+      chain.push(element)
+    }
+    const measure = () => JSON.stringify(chain.map(layoutOf))
+    const isHeld =
+      getComputedStyle(node).contain === "inline-size" &&
+      measure() === withStyle(node, containFit, measure)
+    if (isHeld) {
+      contained.add(node)
+    }
+    return isHeld
+  }
+  const paperFamilyOf = (fontFamily) =>
+    `${fontFamily.split(",")[0]}, system-ui, sans-serif`
+  const ownTextsOf = (element) =>
+    [...element.childNodes].filter((child) => child.nodeType === Node.TEXT_NODE)
+  const rectsOf = (texts) =>
+    texts
+      .flatMap((text) => {
+        const range = document.createRange()
+        range.selectNodeContents(text)
+        return [...range.getClientRects()].map(
+          ({ x, y, width, height }) => `${x},${y} ${width}x${height}`
+        )
+      })
+      .join()
+  let isFrameFallbackMoved = null
+  const frameFallbackMoves = (frame) => {
+    if (isFrameFallbackMoved === null) {
+      const elements = [frame, ...frame.querySelectorAll("*")]
+      const texts = elements.flatMap(ownTextsOf)
+      const declarations = elements.map((element) => [
+        element,
+        `font-family: ${paperFamilyOf(getComputedStyle(element).fontFamily)}`,
+      ])
+      isFrameFallbackMoved =
+        rectsOf(texts) !== withStyles(declarations, () => rectsOf(texts))
+    }
+    return isFrameFallbackMoved
+  }
+  const fallsBackApart = (node) => {
+    const { fontFamily } = getComputedStyle(node)
+    const paperFamily = paperFamilyOf(fontFamily)
+    const ownText = () => rectsOf(ownTextsOf(node))
+    return (
+      paperFamily !== fontFamily &&
+      frameFallbackMoves(node.closest("[data-example]")) &&
+      ownText() !== withStyle(node, `font-family: ${paperFamily}`, ownText)
+    )
+  }
   const droppedAgainst = (node, references, isEmitted = () => false) => {
     const style = getComputedStyle(node)
     for (const reference of references) {
@@ -196,12 +334,21 @@ const createComparison = ({
         isEmitted(property, style, node) ||
         ownDefaults.includes(property) ||
         isUnpaintedBorder(property) ||
+        (property === "contain" && holdsContain(node)) ||
+        (property === "scale" && style.opacity === "0") ||
         (property === "vertical-align" &&
           !/^(inline|table-cell)/.test(style.display)) ||
         harmlessValues.get(property)?.test(value) ||
         referenceStyles.some(
           (reference) => reference.getPropertyValue(property) === value
         ) ||
+        (property === "-webkit-locale" &&
+          layoutOf(node).content ===
+            withStyle(
+              node,
+              "-webkit-locale: auto",
+              () => layoutOf(node).content
+            )) ||
         ((constraints.includes(property) || property === "box-sizing") &&
           !bindsSize(
             node,
@@ -241,6 +388,10 @@ const createComparison = ({
     withStyle,
     bindsSize,
     resizesAsDiv,
+    ownSize,
+    isContained: (node) => contained.has(node),
+    fallsBackApart,
+    legendFitOf,
     dropped,
     droppedFromCopies,
     remove: () => host.remove(),

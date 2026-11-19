@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import { Linter } from "eslint"
 import { pageFunctions, runInPage } from "../flatten.mjs"
+import { toPaperLength } from "../flatten/used-values.mjs"
 
 const browserApis = ["customElements", "document", "getComputedStyle", "Node"]
 
@@ -54,5 +55,13 @@ describe("the functions the flattener runs in the page", () => {
       { name: "ReferenceError", message: "strayName is not defined" }
     )
     assert.equal("strayName" in globalThis, false)
+  })
+
+  test("round a length up from Chromium's 1/64 px to Paper's three decimals", () => {
+    assert.deepEqual([18.2, 31.671875, 24].map(toPaperLength), [
+      "18.204px",
+      "31.672px",
+      "24px",
+    ])
   })
 })

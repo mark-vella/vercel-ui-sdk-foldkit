@@ -87,7 +87,7 @@ describe("fonts", () => {
     )
     assert.deepEqual(
       result.unsupported.map(({ layer, property }) => `${layer} ${property}`),
-      ["fixture/case > preview picture"]
+      ["fixture/case font synthesis", "fixture/case > preview picture"]
     )
   })
 })
@@ -236,7 +236,7 @@ describe("an inline box in a block", () => {
 
   test("is emitted as a box of its own width where its line is its own", async () => {
     const result = await capture(
-      `<div style="line-height: 20px"><a data-slot="link" style="line-height: 24px; text-decoration-line: underline">Link</a></div>`
+      `<div style="line-height: 20px"><a data-slot="link" style="line-height: 24px; text-decoration-line: underline; text-underline-offset: 3px">Link</a></div>`
     )
     assert.deepEqual(
       {
@@ -245,7 +245,7 @@ describe("an inline box in a block", () => {
         unsupported: result.unsupported,
       },
       {
-        link: "min-width: 0px; min-height: 0px; width: fit-content; font-family: Geist, system-ui, sans-serif; line-height: 24px; text-decoration-line: underline; text-decoration-thickness: auto",
+        link: "min-width: 0px; min-height: 0px; width: fit-content; font-family: Geist, system-ui, sans-serif; line-height: 24px; text-decoration-line: underline; text-decoration-thickness: auto; text-underline-offset: 3px",
         size: {
           layer: "fixture/case > preview > div > link",
           kind: "slot",
@@ -257,9 +257,9 @@ describe("an inline box in a block", () => {
     )
   })
 
-  test("is recorded where its parent's line is taller than its own", async () => {
+  test("is recorded where it wraps on its parent's taller lines", async () => {
     const result = await capture(
-      `<div style="line-height: 30px"><a data-slot="link" style="line-height: 20px">Link</a></div>`
+      `<div style="line-height: 30px; width: 60px"><a data-slot="link" style="line-height: 20px">Link to the docs</a></div>`
     )
     assert.deepEqual(
       result.unsupported.filter(({ property }) => property === "display"),
@@ -289,19 +289,22 @@ describe("a scroll container", () => {
     )
   })
 
-  test("is recorded where a script scrolled it", async () => {
+  test("where a script scrolled it is a clip whose content moves up, and the picture matches", async () => {
     const result = await capture(list(""), () => {
       document.querySelector('[data-slot="list"]').scrollTop = 5
     })
     assert.deepEqual(
-      result.unsupported.filter(({ property }) => property === "overflow-y"),
-      [
-        {
-          layer: "fixture/case > preview > list",
-          property: "overflow-y",
-          value: "auto",
-        },
-      ]
+      {
+        content: result.html.match(
+          /<div layer-name="list"[^>]*><div style="([^"]*)"/
+        )?.[1],
+        unsupported: result.unsupported,
+      },
+      {
+        content:
+          "flex-shrink: 0; height: 40px; position: relative; top: -5px; left: 0px; background-color: var(--ink)",
+        unsupported: [],
+      }
     )
   })
 
