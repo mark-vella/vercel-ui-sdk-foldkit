@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util"
-import { syncComponents } from "./components.mjs"
+import { listCaptureNames, syncComponents } from "./components.mjs"
 import { syncFoundations } from "./foundations.mjs"
 import { PrerequisiteError, syncPages } from "./pages.mjs"
 import { connectPaper } from "./paper-client.mjs"
@@ -12,6 +12,7 @@ import {
 
 const usage = `Usage: node paper/sync.mjs <tokens|pages> --file <id>
        node paper/sync.mjs components <component/example>... --file <id>
+       node paper/sync.mjs components --all --file <id>
        scripts/test-slot.sh node paper/sync.mjs foundations --file <id>`
 
 const assertApplied = (tool, { tokens }) => {
@@ -68,7 +69,7 @@ const syncTokens = async (paper, fileId) => {
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
-  options: { file: { type: "string" } },
+  options: { file: { type: "string" }, all: { type: "boolean" } },
 })
 const commands = new Map([
   ["tokens", syncTokens],
@@ -76,14 +77,16 @@ const commands = new Map([
   ["components", syncComponents],
   ["foundations", syncFoundations],
 ])
-const [commandName, ...names] = positionals
+const [commandName, ...named] = positionals
 const command = commands.get(commandName)
-const lacksNames = commandName === "components" && names.length === 0
+const lacksNames =
+  commandName === "components" && named.length === 0 && !values.all
 if (!command || lacksNames || !values.file) {
   console.error(usage)
   process.exit(2)
 }
 
+const names = values.all ? await listCaptureNames() : named
 const paper = await connectPaper()
 try {
   await command(paper, values.file, names)

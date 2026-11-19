@@ -1,11 +1,22 @@
-import { createHash } from "node:crypto"
-import { copyFile, readFile, rm } from "node:fs/promises"
+import { copyFile, readdir, readFile, rm } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { boardStyles, placeBoards } from "./artboards.mjs"
 import { launchBrowser } from "./capture.mjs"
-import { findPageId, PrerequisiteError } from "./pages.mjs"
-import { checkExport, flattenTree, parseTree } from "./roundtrip.mjs"
-import { readCodeTokens, readPaperTokens } from "./tokens.mjs"
+import {
+  compareNames,
+  componentOf,
+  isTooLarge,
+  readArtboard,
+  readArtboards,
+  readPaperFrame,
+  shortHash,
+} from "./frames.mjs"
+import { PrerequisiteError } from "./pages.mjs"
+import { escapeText, lossesOf } from "./provenance.mjs"
+import { checkEmitted, checkExport } from "./roundtrip.mjs"
+import { syncFrames } from "./sync-frames.mjs"
+import { readCodeTokens } from "./tokens.mjs"
 
 const components = {
   label: "components",
@@ -13,18 +24,9 @@ const components = {
   outFolder: fileURLToPath(new URL("./out/", import.meta.url)),
   sourceOf: (sidecar) => path.dirname(path.dirname(sidecar.sources[0])),
 }
-const artboardStyles = {
-  width: "400px",
-  height: "400px",
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "flex-start",
-  gap: "var(--space-8)",
-  padding: "var(--space-8)",
-  backgroundColor: "var(--tint)",
-}
-const provenanceStyle =
-  "font-family: var(--mono); font-size: var(--text-xs); line-height: var(--leading); color: var(--muted); white-space: pre-wrap"
+const examplesFolder = fileURLToPath(
+  new URL("../examples/components/", import.meta.url)
+)
 
 const readCapture = async (name) => {
   const base = path.join(components.outFolder, name)
@@ -42,208 +44,73 @@ const readCapture = async (name) => {
   return { html: html.trim(), sidecar: JSON.parse(sidecar) }
 }
 
-const componentOf = (name) => name.split("/")[0]
-const shortHash = (sidecar) => sidecar.hash.slice(0, 12)
-const escapeText = (text) =>
-  text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-
-const formatProvenance = (sourcePath, sidecar, hashes) => {
-  const commit = `${sidecar.commit.slice(0, 12)}${sidecar.dirty ? " with uncommitted changes" : ""}`
-  return [
-    `source ${sourcePath}`,
-    `commit ${commit}`,
-    ...[...hashes]
-      .sort()
-      .map(
-        ([name, { sourceHash, fingerprint }]) =>
-          `${name} ${sourceHash} ${fingerprint}`
-      ),
-  ].join("\n")
+const listCaptureNames = async () => {
+  const folders = await readdir(examplesFolder)
+  const names = await Promise.all(
+    folders.map(async (component) => {
+      const files = await readdir(
+        path.join(components.outFolder, component)
+      ).catch((error) => {
+        if (error.code !== "ENOENT") {
+          throw error
+        }
+        return []
+      })
+      return files
+        .filter((file) => /^[^.]+\.json$/.test(file))
+        .map((file) => `${component}/${file.slice(0, -".json".length)}`)
+    })
+  )
+  return names.flat().toSorted(compareNames)
 }
 
-const parseProvenance = (text) =>
-  new Map(
-    [...text.matchAll(/^(\S+\/\S+) ([0-9a-f]{12}) ([0-9a-f]{12})$/gm)].map(
-      ([, name, sourceHash, fingerprint]) => [name, { sourceHash, fingerprint }]
+const readSpace = async () => {
+  const { tokens } = await readCodeTokens()
+  return Number.parseFloat(
+    tokens.find(({ name }) => name === "--space-8").value
+  )
+}
+
+const emittedHeight = (sidecar) => {
+  const size = sidecar.unsupported.find(
+    ({ layer, property }) => layer === sidecar.name && property === "size"
+  )
+  return size
+    ? Number(size.value.match(/x([\d.]+) in the emitted HTML/)[1])
+    : sidecar.frame.height
+}
+
+const layoutCatalogue = async (space) => {
+  const sidecars = await Promise.all(
+    (await listCaptureNames()).map(async (name) =>
+      JSON.parse(
+        await readFile(path.join(components.outFolder, `${name}.json`), "utf8")
+      )
     )
   )
-
-const readTree = async (paper, fileId, nodeId) => {
-  const { summary } = await paper.call("get_tree_summary", {
-    fileId,
-    nodeId,
-    depth: 10,
-  })
-  const tree = parseTree(summary)
-  for (const node of flattenTree(tree).filter(({ isElided }) => isElided)) {
-    node.children = (await readTree(paper, fileId, node.id)).children
-  }
-  return tree
+  const boards = [
+    ...Map.groupBy(sidecars, ({ name }) => componentOf(name)),
+  ].map(([component, group]) => ({
+    component,
+    frameHeights: group
+      .filter((sidecar) => !isTooLarge(sidecar))
+      .map(emittedHeight),
+    lines: group.map(
+      (sidecar) =>
+        sidecar.name.length + 48 + lossesOf(sidecar).join(", ").length
+    ),
+  }))
+  return placeBoards(boards, space)
 }
 
-const readPaperFrame = async (paper, fileId, frame) => {
-  const jsx = await paper.call("get_jsx", {
-    fileId,
-    nodeId: frame.id,
-    includeNodeIds: false,
-  })
-  const tree = await readTree(paper, fileId, frame.id)
-  const fingerprint = createHash("sha256")
-    .update([jsx, ...flattenTree(tree).map(({ name }) => name)].join("\n"))
-    .digest("hex")
-    .slice(0, 12)
-  return { jsx, tree, fingerprint }
-}
-
-const readArtboards = async (paper, fileId, page) => {
-  const pageId = await findPageId(paper, fileId, page)
-  const { artboards } = await paper.call("get_basic_info", { fileId, pageId })
-  return { pageId, artboards }
-}
-
-const readArtboard = async (paper, fileId, artboardId) => {
-  const { children } = await paper.call("get_children", {
-    fileId,
-    nodeId: artboardId,
-  })
-  const provenance = children.find(({ name }) => name === "provenance")
-  const recorded = provenance
-    ? parseProvenance(
-        (await paper.call("get_node_info", { fileId, nodeId: provenance.id }))
-          .textContent
-      )
-    : new Map()
-  return { children, provenance, recorded }
-}
-
-const assertTokensPresent = async (paper, fileId, captures) => {
-  const present = new Set(
-    (await readPaperTokens(paper, fileId)).map(({ name }) => name)
-  )
-  const missing = new Set(
-    captures
-      .flatMap(({ sidecar }) => sidecar.bindings)
-      .map(({ token }) => token)
-      .filter((token) => !present.has(token))
-  )
-  if (missing.size > 0) {
-    throw new PrerequisiteError(
-      `Paper is missing tokens these frames use (${[...missing].join(", ")}). Run node paper/sync.mjs tokens --file ${fileId} first.`
-    )
-  }
-}
-
-const isInSync = async (paper, fileId, { frame, entry, sidecar }) => {
-  if (!frame || entry?.sourceHash !== shortHash(sidecar)) {
-    return false
-  }
-  const { jsx, fingerprint } = await readPaperFrame(paper, fileId, frame)
-  return (
-    entry.fingerprint === fingerprint &&
-    sidecar.bindings.every(({ token }) => jsx.includes(`var(${token})`))
-  )
-}
-
-const syncFrames = async (paper, fileId, { page, sourceOf, captures }) => {
-  const { pageId, artboards } = await readArtboards(paper, fileId, page)
-  await assertTokensPresent(paper, fileId, captures)
-  let writes = 0
-  const write = (tool, args) => {
-    writes++
-    return paper.call(tool, { fileId, ...args })
-  }
-  const groups = Map.groupBy(captures, ({ sidecar }) =>
-    componentOf(sidecar.name)
-  )
-  for (const [component, group] of groups) {
-    const writesBefore = writes
-    let artboard = artboards.find(({ name }) => name === component)
-    if (!artboard) {
-      artboard = await write("create_artboard", {
-        name: component,
-        pageId,
-        styles: artboardStyles,
-      })
-      await write("update_styles", {
-        updates: [
-          {
-            nodeIds: [artboard.id],
-            styles: { width: "fit-content", height: "fit-content" },
-          },
-        ],
-      })
-      console.log(`${component}: artboard created`)
-    }
-    const { children, provenance, recorded } = await readArtboard(
-      paper,
-      fileId,
-      artboard.id
-    )
-    const hashes = new Map(recorded)
-    for (const { html, sidecar } of group) {
-      const sourceHash = shortHash(sidecar)
-      const frame = children.find(({ name }) => name === sidecar.name)
-      const entry = recorded.get(sidecar.name)
-      if (await isInSync(paper, fileId, { frame, entry, sidecar })) {
-        console.log(`${sidecar.name}: unchanged`)
-        continue
-      }
-      const {
-        createdNodes: [written],
-      } = await write("write_html", {
-        html,
-        targetNodeId: frame?.id ?? artboard.id,
-        mode: frame ? "replace" : "insert-children",
-      })
-      if (!frame && provenance) {
-        await write("move_nodes", {
-          moves: [{ nodeId: written.id, before: provenance.id }],
-        })
-      }
-      hashes.set(sidecar.name, {
-        sourceHash,
-        fingerprint: (await readPaperFrame(paper, fileId, written)).fingerprint,
-      })
-      console.log(
-        `${sidecar.name}: ${frame ? "replaced" : "created"}, ${sourceHash}`
-      )
-    }
-    if (writes > writesBefore) {
-      const text = escapeText(
-        formatProvenance(sourceOf(group[0].sidecar), group[0].sidecar, hashes)
-      )
-      if (provenance) {
-        await write("set_text_content", {
-          updates: [{ nodeId: provenance.id, html: text }],
-        })
-      } else {
-        await write("write_html", {
-          html: `<div layer-name="provenance" style="${provenanceStyle}">${text}</div>`,
-          targetNodeId: artboard.id,
-          mode: "insert-children",
-        })
-      }
-    }
-    if (provenance && children.at(-1).id !== provenance.id) {
-      await write("move_nodes", {
-        moves: [{ nodeId: provenance.id, parentId: artboard.id }],
-      })
-    }
-    if (writes > writesBefore) {
-      await paper.call("finish_working_on_nodes", {
-        fileId,
-        nodeIds: [artboard.id],
-      })
-    }
-  }
-  console.log(`writes ${writes}`)
-}
-
-const syncComponents = async (paper, fileId, names) =>
-  syncFrames(paper, fileId, {
+const syncComponents = async (paper, fileId, names) => {
+  const space = await readSpace()
+  await syncFrames(paper, fileId, {
     ...components,
     captures: await Promise.all(names.map(readCapture)),
+    board: { styles: boardStyles(space), places: await layoutCatalogue(space) },
   })
+}
 
 const saveScreenshot = async (paper, fileId, { frame, sidecar, outFolder }) => {
   const { exports } = await paper.call("export", {
@@ -258,53 +125,133 @@ const saveScreenshot = async (paper, fileId, { frame, sidecar, outFolder }) => {
   )
 }
 
+const subjects = [
+  /^layer \d+ is (.+) in Paper's export, missing in capture$/,
+  /^layer \d+ is .+ in Paper's export, (.+) in capture$/,
+  /^(.+?): [\w-]+ (?:is bound to|has the literal) /,
+  /^(.+) is [\d.]+x[\d.]+ in Paper's export/,
+  /^(.+) looks different in Paper's export/,
+  /^(.+) is hidden in Paper$/,
+]
+const effects = new Set(["size", "picture"])
+
+const followsFromLoss = (text, { layers, unsupported }) => {
+  const subject = subjects
+    .map((pattern) => text.match(pattern)?.[1])
+    .find(Boolean)
+  if (!subject) {
+    return false
+  }
+  if (
+    text.includes(" looks different in Paper's export") &&
+    unsupported.some(({ property }) => property === "picture")
+  ) {
+    return true
+  }
+  const names = new Set(layers.map(({ layer }) => layer.split(" > ").at(-1)))
+  const named = (path) =>
+    path
+      .split(" > ")
+      .filter((segment) => names.has(segment))
+      .join(" > ")
+  const path = named(subject)
+  return unsupported.some(({ layer, property }) => {
+    const cause = named(layer)
+    return (
+      !effects.has(property) &&
+      (path === cause || path.startsWith(`${cause} > `))
+    )
+  })
+}
+
+const unexplained = async (browser, context, differences) => {
+  const { sidecar, html, tokens } = context
+  if (lossesOf(sidecar).length === 0) {
+    return differences
+  }
+  const offline = await checkEmitted(browser, { sidecar, html, tokens })
+  const explained = new Set([
+    ...offline.map((text) =>
+      text.replaceAll("the emitted HTML", "Paper's export")
+    ),
+    ...sidecar.unsupported.map(
+      ({ layer, property, value }) =>
+        `${layer}: ${property} ${value} is not imported`
+    ),
+  ])
+  return differences.filter(
+    (text) => !explained.has(text) && !followsFromLoss(text, sidecar)
+  )
+}
+
+const unrecordedOnly = (differences) => ({
+  differences,
+  unrecorded: differences,
+})
+
 const verifyFrame = async (paper, fileId, context) => {
-  const { artboards, browser, tokens, sidecar, html, outFolder } = context
+  const { artboards, browser, sidecar, outFolder } = context
   const component = componentOf(sidecar.name)
   const artboard = artboards.find(({ name }) => name === component)
   if (!artboard) {
-    return [`no artboard named ${component}`]
+    return unrecordedOnly([`no artboard named ${component}`])
   }
   const { children, recorded } = await readArtboard(paper, fileId, artboard.id)
+  const entry = recorded.get(sidecar.name)
+  if (entry?.skipped && isTooLarge(sidecar)) {
+    return { differences: [`not imported, ${entry.skipped}`], unrecorded: [] }
+  }
   const frames = children.filter(({ name }) => name === sidecar.name)
   if (frames.length === 0) {
-    return [`no frame named ${sidecar.name} in ${component}`]
+    return unrecordedOnly([`no frame named ${sidecar.name} in ${component}`])
   }
   if (frames.length > 1) {
-    return [
+    return unrecordedOnly([
       `${frames.length} frames are named ${sidecar.name}. Sync never deletes, so remove the copies in Paper.`,
-    ]
+    ])
   }
-  const differences = []
+  const provenance = []
   const { jsx, tree, fingerprint } = await readPaperFrame(
     paper,
     fileId,
     frames[0]
   )
   const sourceHash = shortHash(sidecar)
-  const entry = recorded.get(sidecar.name)
   if (entry?.sourceHash !== sourceHash) {
-    differences.push(
+    provenance.push(
       `provenance records ${entry?.sourceHash ?? "no hash"}, capture is ${sourceHash}`
     )
   } else if (entry.fingerprint !== fingerprint) {
-    differences.push("the frame was edited in Paper after the last sync")
+    provenance.push("the frame was edited in Paper after the last sync")
   }
-  differences.push(
-    ...(await checkExport(browser, { jsx, tree, sidecar, html, tokens }))
+  const [listed, losses] = [entry?.losses ?? [], lossesOf(sidecar)].map(
+    (kinds) => kinds.join(", ") || "nothing"
   )
+  if (entry && listed !== losses) {
+    provenance.push(
+      `provenance lists ${listed} as lost, capture records ${losses}`
+    )
+  }
+  const found = await checkExport(browser, { ...context, jsx, tree })
   await saveScreenshot(paper, fileId, {
     frame: frames[0],
     sidecar,
     outFolder,
   })
-  return differences
+  return {
+    differences: [...provenance, ...found],
+    unrecorded: [
+      ...provenance,
+      ...(await unexplained(browser, context, found)),
+    ],
+  }
 }
 
 const verifyFrames = async (paper, fileId, context) => {
   const { label, page, outFolder, captures, browser, tokens } = context
   const { artboards } = await readArtboards(paper, fileId, page)
   const differences = []
+  const kinds = { exact: 0, recorded: 0, unrecorded: [] }
   for (const { sidecar, html } of captures) {
     const found = await verifyFrame(paper, fileId, {
       artboards,
@@ -314,7 +261,19 @@ const verifyFrames = async (paper, fileId, context) => {
       html,
       outFolder,
     })
-    differences.push(...found.map((text) => `${sidecar.name}: ${text}`))
+    differences.push(
+      ...found.differences.map((text) => `${sidecar.name}: ${text}`)
+    )
+    if (found.unrecorded.length > 0) {
+      kinds.unrecorded.push(sidecar.name)
+    } else if (
+      found.differences.length === 0 &&
+      lossesOf(sidecar).length === 0
+    ) {
+      kinds.exact++
+    } else {
+      kinds.recorded++
+    }
   }
   const notes = captures.flatMap(({ sidecar }) =>
     sidecar.unbound.map(
@@ -328,6 +287,12 @@ const verifyFrames = async (paper, fileId, context) => {
   console.log(
     `${label}: ${captures.length} checked, ${differences.length} differences, ${notes.length} unbound`
   )
+  console.log(
+    `${label}: ${kinds.exact} match with nothing recorded, ${kinds.recorded} differ only by recorded losses, ${kinds.unrecorded.length} differ in a way nothing records`
+  )
+  if (kinds.unrecorded.length > 0) {
+    console.log(`unrecorded: ${kinds.unrecorded.join(", ")}`)
+  }
   return differences.length === 0
 }
 
@@ -349,6 +314,8 @@ const verifyComponents = async (paper, fileId, names) => {
 
 export {
   escapeText,
+  followsFromLoss,
+  listCaptureNames,
   syncComponents,
   syncFrames,
   verifyComponents,
