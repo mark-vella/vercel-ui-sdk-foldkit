@@ -301,8 +301,22 @@ const renderEmitted = (browser, { name, html, tokens, inspect }) =>
     inspect,
   })
 
+// Paper wrote a 10,006-layer frame, then stopped answering and came back empty.
+const maxLayers = 2500
+const oversizeRecords = (layers) =>
+  layers.length > maxLayers
+    ? [
+        {
+          layer: layers[0].layer,
+          property: "layers",
+          value: `${layers.length}, above the ${maxLayers} Paper takes`,
+        },
+      ]
+    : []
+
 const captureCompared = async (browser, options) => {
   const flat = await captureFrame(browser, options)
+  flat.unsupported.push(...oversizeRecords(flat.layers))
   const emitted = await renderEmitted(browser, {
     name: options.name,
     html: flat.html,
@@ -437,8 +451,10 @@ export {
   captureExamples,
   captureFrame,
   launchBrowser,
+  maxLayers,
   noMotion,
   openPage,
+  oversizeRecords,
   readCommit,
   renderEmitted,
   saveCapture,

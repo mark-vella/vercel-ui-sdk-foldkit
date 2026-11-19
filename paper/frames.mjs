@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto"
+import { maxLayers } from "./capture.mjs"
 import { findPageId } from "./pages.mjs"
 import { parseProvenance } from "./provenance.mjs"
 import { flattenTree, parseTree } from "./roundtrip.mjs"
-
-const maxLayers = 2500
 
 const componentOf = (name) => name.split("/")[0]
 const compareNames = (a, b) => {
