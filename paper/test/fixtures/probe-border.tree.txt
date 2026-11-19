@@ -1,0 +1,10 @@
+Frame "probe/border" (3ZS-0) ?×?
+  Text "caption" (3ZT-0) ?×? "probe/border"
+  Frame "preview" (3ZU-0) 512×?
+    Frame "list" (3ZV-0) 240×?
+      Frame "item" (3ZW-0) ?×?
+        Text "First" (3ZX-0) ?×? "First"
+      Frame "item" (3ZY-0) ?×?
+        Text "Second" (3ZZ-0) ?×? "Second"
+    Frame "card" (400-0) ?×?
+      Text "Card" (401-0) ?×? "Card"

@@ -1,0 +1,9 @@
+Frame "probe/paint" (403-0) ?×?
+  Text "caption" (404-0) ?×? "probe/paint"
+  Frame "preview" (405-0) 512×?
+    Frame "track" (406-0) 160×40
+      Frame "holder" (407-0) 50×30
+        Frame "high" (408-0) 40×20
+      Frame "next" (409-0) 50×30
+      Frame "faded" (40A-0) 20×20
+      Frame "offset" (40B-0) 20×20

@@ -1,0 +1,5 @@
+Frame "button/basic" (40L-0) ?×?
+  Text "caption" (40M-0) ?×? "button/basic"
+  Frame "preview" (40N-0) 512×?
+    Frame "button" (40O-0) ?×34
+      Text "Button" (40P-0) ?×? "Button"

@@ -1,0 +1,8 @@
+Frame "probe/leading" (3ZJ-0) ?×?
+  Text "caption" (3ZK-0) ?×? "probe/leading"
+  Frame "preview" (3ZL-0) 512×?
+    Frame "stack" (3ZM-0) ?×?
+      Text "trigger" (3ZN-0) ?×? "Section one"
+      Text "trigger" (3ZO-0) ?×? "Section two"
+      Text "trigger" (3ZP-0) ?×? "Section three"
+    Text "para" (3ZQ-0) 120×? "Shipping takes five to seven days."
