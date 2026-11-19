@@ -217,7 +217,7 @@ The exact provider instance for Opus 5.5 high is a kickoff obligation, resolved 
 
 **Resolution record.** Adapter `t3`, from a live `orchestrator_capabilities` answer on 2026-11-15. Coordinator: `claude-fable-5-2`, effort xhigh. Worker, fixer, reviewer, recheck and decomment: provider instance `claudeAgent`, model `claude-opus-5-5`, effort high, from the run statement. No codemode tool is in the session catalog, so the runner is the local Node program.
 
-**Scratch files.** `ui-sdk probe`, id `01M7GC1T67A9KMGNTCM6JP4EB3`, `ui-sdk probe pages`, `01M7GD588B93A45SFHNMBJVRMX`, `ui-sdk probe review`, `01M7GF5MY6FQQ5MCWRMQZ6MQXN`, and `ui-sdk probe four`, `01M7JP29WCMEDZPPCDNWPKT8NC`. Units U1 to U4 and their reviews write there, one writer to a file. All four are archived at the end. The kit file is `01M7F5MBD4CPPWD9P0G739TERM`.
+**Scratch files.** Five Paper files, each named `ui-sdk probe` and a word, took the writes of units U1 to U8a and of their reviews, one writer to a file. All five were archived on 2026-11-19, with one clone of the kit file made to check that Paper had saved it. `unarchive_resources` brings them back. The kit file is `01M7F5MBD4CPPWD9P0G739TERM`.
 
 **Work folder.** `.swe-mode/paper-kit/` in this worktree, ignored locally. It holds briefs and reports.
 
@@ -376,6 +376,7 @@ Filled by the coordinator on 2026-11-19, from the reviewed head `c6677d0`, with 
 - A second run of `tokens`, `pages`, `foundations` and `components --all` made 0 writes.
 - `verify tokens`, `verify pages` and `verify foundations` exit 0. `verify components --all` took 519 s and exits 1, as above: 419 match, 149 differ only by recorded losses, 6 differ in a way nothing records.
 - The logs are under `.swe-mode/paper-kit/reports/U8-kit/` in the coordinator's checkout.
+- Paper's "updated" time for a file does not move when a file is written, measured with a write and a 30 second wait. A clone of the kit file made through Paper after the sync holds all 54 component artboards and 13,551 nodes on that page.
 
 `00 Cover`, `03 Patterns` and `04 Templates` are empty.
 
