@@ -310,8 +310,8 @@ const createRecords = ({
       ].some((value) => value !== "none")
     )
   }
-  // Paper drops z-index, so a layer below zero paints over its parent, where
-  // the browser paints it under the parent's background.
+  // Paper paints a layer below zero over its parent's background, where the
+  // browser paints it under a parent that forms no stacking context.
   const recordBehindParent = ({ path, styles }, parent) => {
     const zIndex = styles["z-index"].value
     if (Number(zIndex) < 0 && !formsStackingContext(parent)) {
